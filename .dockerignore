@@ -1,0 +1,10 @@
+node_modules
+.git
+.github
+*.md
+.gitignore
+.dockerignore
+cache
+coverage
+.env*
+*.log
