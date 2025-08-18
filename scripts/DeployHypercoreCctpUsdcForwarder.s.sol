@@ -16,15 +16,3 @@
  * limitations under the License.
  */
 pragma solidity 0.7.6;
-
-import {IForwardDepositReceiver} from "./IForwardDepositReceiver.sol";
-
-/**
- * @title ICoreDepositWallet
- * @notice Interface for the core deposit wallet
- */
-interface ICoreDepositWallet is IForwardDepositReceiver {
-    function deposit(uint256 amount) external;
-
-    function transfer(address to, uint256 amount) external;
-}

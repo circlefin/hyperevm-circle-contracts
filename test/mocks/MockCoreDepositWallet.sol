@@ -17,9 +17,18 @@
  */
 pragma solidity 0.7.6;
 
-interface IHypercoreCctpUsdcForwarder {
-    function mintAndForward(
-        bytes calldata message,
-        bytes calldata attestation
-    ) external;
+import {ICoreDepositWallet} from "../../src/interfaces/ICoreDepositWallet.sol";
+
+contract MockCoreDepositWallet is ICoreDepositWallet {
+    constructor() {}
+
+    function deposit(uint256 amount) external override {}
+
+    function depositFor(
+        address sender,
+        address recipient,
+        uint256 amount
+    ) external override {}
+
+    function transfer(address to, uint256 amount) external override {}
 }

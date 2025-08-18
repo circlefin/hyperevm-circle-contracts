@@ -6,6 +6,15 @@
       "^0.7.6"
     ],
     "avoid-sha3": "warn",
-    "no-unused-vars": "warn"
+    "no-unused-vars": "warn",
+    "use-natspec": [
+      "warn",
+      {
+        "author": {
+          "enabled": false
+        }
+      }
+    ],
+    "import-path-check": "off"
   }
 }

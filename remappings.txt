@@ -1,3 +1,4 @@
+@evm-cctp-contracts/=lib/evm-cctp-contracts/src/
+@memview-sol/=lib/memview-sol
 @openzeppelin/=lib/openzeppelin-contracts
 forge-std/=lib/forge-std/src/
-evm-cctp-contracts/=lib/evm-cctp-contracts/src/

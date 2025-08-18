@@ -17,16 +17,20 @@
  */
 pragma solidity 0.7.6;
 
-import {IHypercoreCctpUsdcForwarder} from "./interfaces/IHypercoreCctpUsdcForwarder.sol";
-
-contract HypercoreCctpUsdcForwarder is IHypercoreCctpUsdcForwarder {
-    function mintAndForward(
-        bytes calldata message,
-        bytes calldata attestation
-    )
-        external 
-        override 
-    {
-        revert("mintAndForward: not implemented");
-    }
+/**
+ * @title IForwardDepositReceiver
+ * @notice Interface for a contract that can receive deposits from the CCTP Forwarder
+ */
+interface IForwardDepositReceiver {
+    /**
+     * @notice Deposit tokens for a recipient
+     * @param sender Sender of the deposit
+     * @param recipient Recipient of the deposit
+     * @param amount Amount of tokens to deposit
+     */
+    function depositFor(
+        address sender,
+        address recipient,
+        uint256 amount
+    ) external;
 }

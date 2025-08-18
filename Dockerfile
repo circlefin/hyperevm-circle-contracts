@@ -1,4 +1,4 @@
-ARG FOUNDRY_VERSION=v0.3.0
+ARG FOUNDRY_VERSION=nightly-3fa02706ca732c994715ba42d923605692062375
 # Use fixed foundry image
 FROM ghcr.io/foundry-rs/foundry:${FOUNDRY_VERSION}
 

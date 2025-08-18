@@ -2,7 +2,8 @@
   "name": "hyperevm-circle-contracts",
   "license": "Apache-2.0",
   "scripts": {
-    "lint": "solhint '**/*.sol'"
+    "lint": "solhint '**/*.sol'",
+    "coverage": "forge coverage --report lcov --report-file coverage/lcov.info"
   },
   "devDependencies": {
     "solhint": "^6.0.0"

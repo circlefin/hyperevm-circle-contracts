@@ -17,14 +17,18 @@
  */
 pragma solidity 0.7.6;
 
-import {IForwardDepositReceiver} from "./IForwardDepositReceiver.sol";
-
 /**
- * @title ICoreDepositWallet
- * @notice Interface for the core deposit wallet
+ * @title ICctpForwarder
+ * @notice Interface for the CCTP forwarder
  */
-interface ICoreDepositWallet is IForwardDepositReceiver {
-    function deposit(uint256 amount) external;
-
-    function transfer(address to, uint256 amount) external;
+interface ICctpForwarder {
+    /**
+     * @notice Mint token and forward to forwarding address on behalf of the forward recipient
+     * @param message CCTP receive message
+     * @param attestation CCTP attestation
+     */
+    function mintAndForward(
+        bytes calldata message,
+        bytes calldata attestation
+    ) external;
 }
