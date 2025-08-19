@@ -107,7 +107,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     function depositFor(address sender, address recipient, uint256 amount) external override whenNotPaused {
         require(recipient != address(0), "Invalid recipient: zero address");
         require(recipient != tokenSystemAddress, "Invalid recipient: system address");
-        require(recipient != address(this), "Invalid recipient: wallet address");
+        require(recipient != address(this), "Invalid recipient: CoreDepositWallet");
         _deposit(sender, recipient, amount);
     }
 
