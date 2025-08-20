@@ -24,9 +24,15 @@ import {MockMintBurnToken} from "lib/evm-cctp-contracts/test/mocks/MockMintBurnT
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract TestUtils is Test {
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferred(
+        address indexed previousOwner,
+        address indexed newOwner
+    );
 
-    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferStarted(
+        address indexed previousOwner,
+        address indexed newOwner
+    );
 
     event Pause();
 
@@ -37,12 +43,6 @@ contract TestUtils is Test {
     event RescuerChanged(address indexed newRescuer);
 
     event Upgraded(address indexed implementation);
-
-    // Test addresses
-    address public owner = vm.addr(2100);
-    address public pauser = vm.addr(2101);
-    address public rescuer = vm.addr(2102);
-    address public proxyAdmin = vm.addr(2103);
 
     function assertContractIsPausable(
         address _pausableContractAddress,
@@ -142,16 +142,27 @@ contract TestUtils is Test {
         // Check that _rescuer cannot rescue more tokens than are available
         vm.prank(_rescuer);
         vm.expectRevert("ERC20: transfer amount exceeds balance");
-        _rescuableContract.rescueERC20(IERC20(address(_mockMintBurnToken)), _rescueRecipient, _amount);
+        _rescuableContract.rescueERC20(
+            IERC20(address(_mockMintBurnToken)),
+            _rescueRecipient,
+            _amount
+        );
 
         // _rescueRecipient accidentally sends _mockMintBurnToken to the _rescuableContractAddress
         vm.prank(_rescueRecipient);
         _mockMintBurnToken.transfer(_rescuableContractAddress, _amount);
-        assertEq(_mockMintBurnToken.balanceOf(_rescuableContractAddress), _amount);
+        assertEq(
+            _mockMintBurnToken.balanceOf(_rescuableContractAddress),
+            _amount
+        );
 
         // Rescue erc20 to _rescueRecipient
         vm.prank(_rescuer);
-        _rescuableContract.rescueERC20(IERC20(address(_mockMintBurnToken)), _rescueRecipient, _amount);
+        _rescuableContract.rescueERC20(
+            IERC20(address(_mockMintBurnToken)),
+            _rescueRecipient,
+            _amount
+        );
 
         // Assert funds are rescued
         assertEq(_mockMintBurnToken.balanceOf(_rescueRecipient), _amount);
@@ -160,7 +171,11 @@ contract TestUtils is Test {
         assertTrue(_rescuableContract.rescuer() != _nonRescuer);
         vm.prank(_nonRescuer);
         vm.expectRevert("Rescuable: caller is not the rescuer");
-        _rescuableContract.rescueERC20(IERC20(address(_mockMintBurnToken)), _rescueRecipient, _amount);
+        _rescuableContract.rescueERC20(
+            IERC20(address(_mockMintBurnToken)),
+            _rescueRecipient,
+            _amount
+        );
 
         // Check that non-owner cannot update rescuer
         vm.prank(_nonRescuer);
@@ -174,9 +189,11 @@ contract TestUtils is Test {
         vm.expectRevert("Ownable: caller is not the owner");
     }
 
-    function transferOwnershipFailsIfNotOwner(address _ownableContractAddress, address _notOwner, address _newOwner)
-        public
-    {
+    function transferOwnershipFailsIfNotOwner(
+        address _ownableContractAddress,
+        address _notOwner,
+        address _newOwner
+    ) public {
         Ownable2Step _ownableContract = Ownable2Step(_ownableContractAddress);
         address _initialOwner = _ownableContract.owner();
         expectRevertWithWrongOwner(_notOwner);
@@ -252,7 +269,10 @@ contract TestUtils is Test {
         vm.stopPrank();
     }
 
-    function transferOwnershipAndAcceptOwnership(address _ownableContractAddress, address _newOwner) public {
+    function transferOwnershipAndAcceptOwnership(
+        address _ownableContractAddress,
+        address _newOwner
+    ) public {
         Ownable2Step _ownableContract = Ownable2Step(_ownableContractAddress);
         address initialOwner = _ownableContract.owner();
         vm.assume(initialOwner != _newOwner);
@@ -290,8 +310,10 @@ contract TestUtils is Test {
         address initialOwner = _ownableContract.owner();
         vm.assume(_newOwner != address(0));
         vm.assume(
-            _secondNewOwner != _newOwner && _secondNewOwner != address(0) && _secondNewOwner != _ownableContractAddress
-                && _secondNewOwner != initialOwner
+            _secondNewOwner != _newOwner &&
+                _secondNewOwner != address(0) &&
+                _secondNewOwner != _ownableContractAddress &&
+                _secondNewOwner != initialOwner
         );
         assertEq(_ownableContract.owner(), initialOwner);
 

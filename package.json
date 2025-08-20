@@ -3,7 +3,8 @@
   "license": "Apache-2.0",
   "scripts": {
     "lint": "solhint '**/*.sol'",
-    "coverage": "forge coverage --report lcov --report-file coverage/lcov.info"
+    "coverage": "forge coverage --no-match-coverage \"^(test|lib)/\"",
+    "coverage-report": "forge coverage --report lcov --report-file coverage/lcov.info --no-match-coverage \"^(test|lib)/\""
   },
   "devDependencies": {
     "solhint": "^6.0.0"

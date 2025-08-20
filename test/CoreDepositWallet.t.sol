@@ -22,104 +22,134 @@ import {MockBlacklistableMintBurnToken} from "./mocks/MockBlacklistableMintBurnT
 import {AdminUpgradableProxy} from "@evm-cctp-contracts/proxy/AdminUpgradableProxy.sol";
 import {Test} from "forge-std/Test.sol";
 import {TestUtils} from "./TestUtils.sol";
+import {DeployScriptTestUtils} from "./DeployScriptTestUtils.s.sol";
 import {MockCoreDepositWalletV2} from "./mocks/MockCoreDepositWalletV2.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-contract CoreDepositWalletTest is Test, TestUtils {
+contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     event Transfer(address indexed from, address indexed to, uint256 amount);
 
     event Withdraw(address to, uint256 value);
 
-    MockBlacklistableMintBurnToken public USDC = new MockBlacklistableMintBurnToken();
-    CoreDepositWallet public coreDepositWalletImpl;
-    CoreDepositWallet public coreDepositWallet;
-
-    address public tokenSystemAddress = address(10);
     address public newTokenSystemAddress = address(11);
 
-    CoreDepositWallet.CoreDepositWalletRoles roles =
-        CoreDepositWallet.CoreDepositWalletRoles({owner: owner, rescuer: rescuer, pauser: pauser});
-
     function setUp() public {
-        coreDepositWalletImpl = new CoreDepositWallet(address(USDC), tokenSystemAddress);
-
-        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(address(coreDepositWalletImpl), proxyAdmin, bytes(""));
-
-        coreDepositWallet = CoreDepositWallet(address(_proxy));
-        coreDepositWallet.initialize(roles);
+        _deployImplementations();
+        _deployProxies();
     }
 
     // Proxy tests
 
     function testInitialize_revertsIfOwnerIsZeroAddress() public {
-        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(address(coreDepositWalletImpl), proxyAdmin, bytes(""));
+        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
+            address(coreDepositWalletImpl),
+            coreDepositWalletProxyAdmin,
+            bytes("")
+        );
         vm.expectRevert("Invalid roles.owner: zero address");
         CoreDepositWallet(address(_proxy)).initialize(
-            CoreDepositWallet.CoreDepositWalletRoles({owner: address(0), rescuer: rescuer, pauser: pauser})
+            CoreDepositWallet.CoreDepositWalletRoles({
+                owner: address(0),
+                rescuer: coreDepositWalletRescuer,
+                pauser: coreDepositWalletPauser
+            })
         );
     }
 
     function testInitialize_revertsIfRescuerIsZeroAddress() public {
-        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(address(coreDepositWalletImpl), proxyAdmin, bytes(""));
+        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
+            address(coreDepositWalletImpl),
+            coreDepositWalletProxyAdmin,
+            bytes("")
+        );
         vm.expectRevert("Rescuable: new rescuer is the zero address");
         CoreDepositWallet(address(_proxy)).initialize(
-            CoreDepositWallet.CoreDepositWalletRoles({owner: owner, rescuer: address(0), pauser: pauser})
+            CoreDepositWallet.CoreDepositWalletRoles({
+                owner: coreDepositWalletOwner,
+                rescuer: address(0),
+                pauser: coreDepositWalletPauser
+            })
         );
     }
 
     function testInitialize_revertsIfPauserIsZeroAddress() public {
-        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(address(coreDepositWalletImpl), proxyAdmin, bytes(""));
+        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
+            address(coreDepositWalletImpl),
+            coreDepositWalletProxyAdmin,
+            bytes("")
+        );
         vm.expectRevert("Pausable: new pauser is the zero address");
         CoreDepositWallet(address(_proxy)).initialize(
-            CoreDepositWallet.CoreDepositWalletRoles({owner: owner, rescuer: rescuer, pauser: address(0)})
+            CoreDepositWallet.CoreDepositWalletRoles({
+                owner: coreDepositWalletOwner,
+                rescuer: coreDepositWalletRescuer,
+                pauser: address(0)
+            })
         );
     }
 
     function testInitialize_setsTheOwner() public view {
-        assertEq(coreDepositWallet.owner(), owner);
+        assertEq(coreDepositWallet.owner(), coreDepositWalletOwner);
     }
 
     function testInitialize_setsTheRescuer() public view {
-        assertEq(coreDepositWallet.rescuer(), rescuer);
+        assertEq(coreDepositWallet.rescuer(), coreDepositWalletRescuer);
     }
 
     function testInitialize_setsThePauser() public view {
-        assertEq(coreDepositWallet.pauser(), pauser);
+        assertEq(coreDepositWallet.pauser(), coreDepositWalletPauser);
     }
 
     function testInitialize_canBeCalledAtomicallyByTheProxy() public {
         AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
             address(coreDepositWalletImpl),
-            proxyAdmin,
-            abi.encodeWithSelector(CoreDepositWallet.initialize.selector, roles)
+            coreDepositWalletProxyAdmin,
+            abi.encodeWithSelector(
+                CoreDepositWallet.initialize.selector,
+                coreDepositWalletRoles
+            )
         );
-        assertEq(CoreDepositWallet(address(_proxy)).owner(), owner);
-        assertEq(CoreDepositWallet(address(_proxy)).rescuer(), rescuer);
-        assertEq(CoreDepositWallet(address(_proxy)).pauser(), pauser);
+        assertEq(
+            CoreDepositWallet(address(_proxy)).owner(),
+            coreDepositWalletOwner
+        );
+        assertEq(
+            CoreDepositWallet(address(_proxy)).rescuer(),
+            coreDepositWalletRescuer
+        );
+        assertEq(
+            CoreDepositWallet(address(_proxy)).pauser(),
+            coreDepositWalletPauser
+        );
     }
 
     function testInitialize_revertsIfCalledTwice() public {
         vm.expectRevert("Initializable: invalid initialization");
-        coreDepositWallet.initialize(roles);
+        coreDepositWallet.initialize(coreDepositWalletRoles);
     }
 
     function testInitialize_revertsIfCalledOnImplementation() public {
         vm.expectRevert("Initializable: invalid initialization");
-        coreDepositWalletImpl.initialize(roles);
+        coreDepositWalletImpl.initialize(coreDepositWalletRoles);
     }
 
     function testUpgrade_succeeds() public {
-        AdminUpgradableProxy _proxy = AdminUpgradableProxy(payable(address(coreDepositWallet)));
+        AdminUpgradableProxy _proxy = AdminUpgradableProxy(
+            payable(address(coreDepositWallet))
+        );
 
         // Sanity check
         assertEq(_proxy.implementation(), address(coreDepositWalletImpl));
 
         // Test that we can upgrade to a v2 CoreDepositWallet
         // Deploy v2 implementation
-        MockCoreDepositWalletV2 _implV2 = new MockCoreDepositWalletV2(address(USDC), newTokenSystemAddress);
+        MockCoreDepositWalletV2 _implV2 = new MockCoreDepositWalletV2(
+            TOKEN,
+            newTokenSystemAddress
+        );
 
         // Upgrade
-        vm.prank(proxyAdmin);
+        vm.prank(coreDepositWalletProxyAdmin);
         vm.expectEmit(true, true, true, true);
         emit Upgraded(address(_implV2));
         _proxy.upgradeTo(address(_implV2));
@@ -133,56 +163,94 @@ contract CoreDepositWalletTest is Test, TestUtils {
 
     function testConstructor_revertsIfTokenIsZeroAddress() public {
         vm.expectRevert("Invalid tokenAddress: zero address");
-        new CoreDepositWallet(address(0), tokenSystemAddress);
+        new CoreDepositWallet(address(0), TOKEN_SYSTEM_ADDRESS);
     }
 
     function testConstructor_revertsIfTokenSystemAddressIsZeroAddress() public {
         vm.expectRevert("Invalid _tokenSystemAddress: zero address");
-        new CoreDepositWallet(address(USDC), address(0));
+        new CoreDepositWallet(TOKEN, address(0));
     }
 
     // Ownable tests
 
-    function testTransferOwnershipAndAcceptOwnership_succeeds(address _newOwner) public {
+    function testTransferOwnershipAndAcceptOwnership_succeeds(
+        address _newOwner
+    ) public {
         vm.assume(_newOwner != coreDepositWallet.owner());
-        transferOwnershipAndAcceptOwnership(address(coreDepositWallet), _newOwner);
+        transferOwnershipAndAcceptOwnership(
+            address(coreDepositWallet),
+            _newOwner
+        );
     }
 
-    function testTransferOwnership_revertsOnNonOwner(address _notOwner, address _newOwner) public {
+    function testTransferOwnership_revertsOnNonOwner(
+        address _notOwner,
+        address _newOwner
+    ) public {
         vm.assume(_notOwner != coreDepositWallet.owner());
-        transferOwnershipFailsIfNotOwner(address(coreDepositWallet), _notOwner, _newOwner);
+        transferOwnershipFailsIfNotOwner(
+            address(coreDepositWallet),
+            _notOwner,
+            _newOwner
+        );
     }
 
-    function testAcceptOwnership_revertsOnNonPendingOwner(address _newOwner, address _otherAccount) public {
+    function testAcceptOwnership_revertsOnNonPendingOwner(
+        address _newOwner,
+        address _otherAccount
+    ) public {
         vm.assume(_newOwner != _otherAccount);
-        acceptOwnershipFailsIfNotPendingOwner(address(coreDepositWallet), _newOwner, _otherAccount);
+        acceptOwnershipFailsIfNotPendingOwner(
+            address(coreDepositWallet),
+            _newOwner,
+            _otherAccount
+        );
     }
 
     function testTransferOwnershipWithoutAcceptingThenTransferToNewOwner_succeeds(
         address _newOwner,
         address _secondNewOwner
     ) public {
-        transferOwnershipWithoutAcceptingThenTransferToNewOwner(address(coreDepositWallet), _newOwner, _secondNewOwner);
+        transferOwnershipWithoutAcceptingThenTransferToNewOwner(
+            address(coreDepositWallet),
+            _newOwner,
+            _secondNewOwner
+        );
     }
 
     // Pausable tests
 
     function testPausable() public {
-        assertContractIsPausable(address(coreDepositWallet), pauser, address(100), owner, address(200));
+        assertContractIsPausable(
+            address(coreDepositWallet),
+            coreDepositWalletPauser,
+            address(100),
+            coreDepositWalletOwner,
+            address(200)
+        );
     }
 
     // Rescuable tests
 
     function testRescuable() public {
-        assertContractIsRescuable(address(coreDepositWallet), rescuer, address(100), 100, address(200));
+        assertContractIsRescuable(
+            address(coreDepositWallet),
+            coreDepositWalletRescuer,
+            address(100),
+            100,
+            address(200)
+        );
     }
 
-    function testRescueERC20_revertsIfTokenContractIsToken(address _to, uint256 _amount) public {
+    function testRescueERC20_revertsIfTokenContractIsToken(
+        address _to,
+        uint256 _amount
+    ) public {
         vm.assume(_to != address(0));
         vm.assume(_amount > 0);
 
         IERC20 tokenContract = coreDepositWallet.token();
-        vm.prank(rescuer);
+        vm.prank(coreDepositWalletRescuer);
         vm.expectRevert("Cannot rescue token");
         coreDepositWallet.rescueERC20(tokenContract, _to, _amount);
     }
@@ -192,30 +260,41 @@ contract CoreDepositWalletTest is Test, TestUtils {
         vm.assume(_sender != address(0));
 
         // Mint tokens to the sender
-        USDC.mint(_sender, _amount);
+        MockBlacklistableMintBurnToken(TOKEN).mint(_sender, _amount);
 
         // Approve the CoreDepositWallet to spend the tokens
         vm.startPrank(_sender);
-        USDC.approve(address(coreDepositWallet), _amount);
+        MockBlacklistableMintBurnToken(TOKEN).approve(
+            address(coreDepositWallet),
+            _amount
+        );
 
         // Check that the Transfer event was emitted
         vm.expectEmit(true, true, true, true);
-        emit Transfer(_sender, tokenSystemAddress, _amount);
+        emit Transfer(_sender, TOKEN_SYSTEM_ADDRESS, _amount);
 
         // Deposit tokens into the CoreDepositWallet
         coreDepositWallet.deposit(_amount);
         vm.stopPrank();
 
         // Check the balance of the CoreDepositWallet
-        assertEq(USDC.balanceOf(address(coreDepositWallet)), _amount);
+        assertEq(
+            MockBlacklistableMintBurnToken(TOKEN).balanceOf(
+                address(coreDepositWallet)
+            ),
+            _amount
+        );
     }
 
-    function testDeposit_revertsWhenTransferFails(uint256 _amount, address _sender) public {
+    function testDeposit_revertsWhenTransferFails(
+        uint256 _amount,
+        address _sender
+    ) public {
         vm.assume(_sender != address(0));
 
         vm.prank(_sender);
         vm.mockCall(
-            address(USDC),
+            address(TOKEN),
             abi.encodeWithSelector(MockMintBurnToken.transferFrom.selector),
             abi.encode(false)
         );
@@ -225,11 +304,14 @@ contract CoreDepositWalletTest is Test, TestUtils {
         coreDepositWallet.deposit(_amount);
     }
 
-    function testDeposit_revertsWhenPaused(uint256 _amount, address _pauser) public {
+    function testDeposit_revertsWhenPaused(
+        uint256 _amount,
+        address _pauser
+    ) public {
         vm.assume(_pauser != address(0));
         vm.assume(_amount > 0);
 
-        vm.prank(owner);
+        vm.prank(coreDepositWalletOwner);
         coreDepositWallet.updatePauser(_pauser);
 
         vm.prank(_pauser);
@@ -245,41 +327,57 @@ contract CoreDepositWalletTest is Test, TestUtils {
         coreDepositWallet.deposit(0);
     }
 
-    function testDepositFor_succeeds(address _sender, address _recipient, uint256 _amount) public {
+    function testDepositFor_succeeds(
+        address _sender,
+        address _recipient,
+        uint256 _amount
+    ) public {
         vm.assume(_amount > 0);
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
-        vm.assume(_recipient != tokenSystemAddress);
+        vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
         vm.assume(_recipient != address(coreDepositWallet));
 
         // Mint tokens to the sender
-        USDC.mint(_sender, _amount);
+        MockBlacklistableMintBurnToken(TOKEN).mint(_sender, _amount);
 
         // Approve the CoreDepositWallet to spend the tokens
         vm.startPrank(_sender);
-        USDC.approve(address(coreDepositWallet), _amount);
+        MockBlacklistableMintBurnToken(TOKEN).approve(
+            address(coreDepositWallet),
+            _amount
+        );
 
         // Check that the Transfer event was emitted
         vm.expectEmit(true, true, true, true);
-        emit Transfer(_recipient, tokenSystemAddress, _amount);
+        emit Transfer(_recipient, TOKEN_SYSTEM_ADDRESS, _amount);
 
         // Deposit tokens into the CoreDepositWallet
         coreDepositWallet.depositFor(_sender, _recipient, _amount);
         vm.stopPrank();
 
         // Check the balance of the CoreDepositWallet
-        assertEq(USDC.balanceOf(address(coreDepositWallet)), _amount);
+        assertEq(
+            MockBlacklistableMintBurnToken(TOKEN).balanceOf(
+                address(coreDepositWallet)
+            ),
+            _amount
+        );
     }
 
-    function testDepositFor_revertsWhenTransferFails(address _sender, address _recipient, uint256 _amount) public {
+    function testDepositFor_revertsWhenTransferFails(
+        address _sender,
+        address _recipient,
+        uint256 _amount
+    ) public {
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
-        vm.assume(_recipient != tokenSystemAddress);
+        vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
         vm.assume(_recipient != address(coreDepositWallet));
 
         vm.prank(_sender);
         vm.mockCall(
-            address(USDC),
+            address(TOKEN),
             abi.encodeWithSelector(MockMintBurnToken.transferFrom.selector),
             abi.encode(false)
         );
@@ -289,7 +387,10 @@ contract CoreDepositWalletTest is Test, TestUtils {
         coreDepositWallet.deposit(_amount);
     }
 
-    function testDepositFor_revertsWhenRecipientIsZeroAddress(address _sender, uint256 _amount) public {
+    function testDepositFor_revertsWhenRecipientIsZeroAddress(
+        address _sender,
+        uint256 _amount
+    ) public {
         vm.assume(_sender != address(0));
         vm.assume(_amount > 0);
 
@@ -297,43 +398,60 @@ contract CoreDepositWalletTest is Test, TestUtils {
         coreDepositWallet.depositFor(_sender, address(0), _amount);
     }
 
-    function testDepositFor_revertsWhenRecipientIsSystemAddress(address _sender, uint256 _amount) public {
+    function testDepositFor_revertsWhenRecipientIsSystemAddress(
+        address _sender,
+        uint256 _amount
+    ) public {
         vm.assume(_sender != address(0));
         vm.assume(_amount > 0);
 
         vm.expectRevert("Invalid recipient: system address");
-        coreDepositWallet.depositFor(_sender, tokenSystemAddress, _amount);
+        coreDepositWallet.depositFor(_sender, TOKEN_SYSTEM_ADDRESS, _amount);
     }
 
-    function testDepositFor_revertsWhenRecipientIsCoreDepositWallet(address _sender, uint256 _amount) public {
+    function testDepositFor_revertsWhenRecipientIsCoreDepositWallet(
+        address _sender,
+        uint256 _amount
+    ) public {
         vm.assume(_sender != address(0));
         vm.assume(_amount > 0);
 
         vm.expectRevert("Invalid recipient: CoreDepositWallet");
-        coreDepositWallet.depositFor(_sender, address(coreDepositWallet), _amount);
+        coreDepositWallet.depositFor(
+            _sender,
+            address(coreDepositWallet),
+            _amount
+        );
     }
 
-    function testDepositFor_revertsWhenRecipientBlocklisted(address _sender, address _recipient, uint256 _amount) public {
+    function testDepositFor_revertsWhenRecipientBlocklisted(
+        address _sender,
+        address _recipient,
+        uint256 _amount
+    ) public {
         vm.assume(_sender != address(0));
         vm.assume(_amount > 0);
         vm.assume(_recipient != address(0));
-        vm.assume(_recipient != tokenSystemAddress);
+        vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
         vm.assume(_recipient != address(coreDepositWallet));
 
-        USDC.blacklist(_recipient);
+        MockBlacklistableMintBurnToken(TOKEN).blacklist(_recipient);
         vm.expectRevert("Invalid recipient: blacklisted");
         coreDepositWallet.depositFor(_sender, _recipient, _amount);
     }
 
-    function testDepositFor_revertsWhenPaused(address _sender, address _recipient, uint256 _amount, address _pauser)
-        public
-    {
+    function testDepositFor_revertsWhenPaused(
+        address _sender,
+        address _recipient,
+        uint256 _amount,
+        address _pauser
+    ) public {
         vm.assume(_pauser != address(0));
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_amount > 0);
 
-        vm.prank(owner);
+        vm.prank(coreDepositWalletOwner);
         coreDepositWallet.updatePauser(_pauser);
 
         vm.prank(_pauser);
@@ -344,9 +462,12 @@ contract CoreDepositWalletTest is Test, TestUtils {
         coreDepositWallet.depositFor(_sender, _recipient, _amount);
     }
 
-    function testDepositFor_revertsWithZeroAmount(address sender, address recipient) public {
+    function testDepositFor_revertsWithZeroAmount(
+        address sender,
+        address recipient
+    ) public {
         vm.assume(recipient != address(0));
-        vm.assume(recipient != tokenSystemAddress);
+        vm.assume(recipient != TOKEN_SYSTEM_ADDRESS);
         vm.assume(recipient != address(coreDepositWallet));
 
         vm.expectRevert("Amount must be greater than zero");
@@ -355,26 +476,32 @@ contract CoreDepositWalletTest is Test, TestUtils {
 
     function testTransfer_succeeds(address _to, uint256 _amount) public {
         vm.assume(_to != address(0));
-        vm.assume(_to != tokenSystemAddress);
+        vm.assume(_to != TOKEN_SYSTEM_ADDRESS);
         vm.assume(_amount > 0);
 
         // Mint tokens to the CoreDepositWallet
-        USDC.mint(address(coreDepositWallet), _amount);
+        MockBlacklistableMintBurnToken(TOKEN).mint(
+            address(coreDepositWallet),
+            _amount
+        );
 
         // Check that the Withdraw event was emitted
         vm.expectEmit(true, true, true, true);
         emit Withdraw(_to, _amount);
-        
+
         // Transfer tokens from the CoreDepositWallet
-        vm.prank(tokenSystemAddress);
+        vm.prank(TOKEN_SYSTEM_ADDRESS);
         coreDepositWallet.transfer(_to, _amount);
 
         // Check the balance of the _to address
-        assertEq(USDC.balanceOf(_to), _amount);
+        assertEq(MockBlacklistableMintBurnToken(TOKEN).balanceOf(_to), _amount);
     }
 
-    function testTransfer_revertsWhenSenderIsNotSystemAddress(address _to, uint256 _amount) public {
-        vm.assume(_to != tokenSystemAddress);
+    function testTransfer_revertsWhenSenderIsNotSystemAddress(
+        address _to,
+        uint256 _amount
+    ) public {
+        vm.assume(_to != TOKEN_SYSTEM_ADDRESS);
         vm.prank(_to);
 
         vm.expectRevert("Caller is not the system address");
@@ -382,34 +509,41 @@ contract CoreDepositWalletTest is Test, TestUtils {
     }
 
     function testTransfer_revertsWhenToIsSystemAddress(uint256 _amount) public {
-        vm.prank(tokenSystemAddress);
+        vm.prank(TOKEN_SYSTEM_ADDRESS);
 
         vm.expectRevert("Invalid to: system address");
-        coreDepositWallet.transfer(tokenSystemAddress, _amount);
+        coreDepositWallet.transfer(TOKEN_SYSTEM_ADDRESS, _amount);
     }
 
-    function testTransfer_revertsWhenTransferFails(address _to, uint256 _amount) public {
+    function testTransfer_revertsWhenTransferFails(
+        address _to,
+        uint256 _amount
+    ) public {
         vm.assume(_to != address(0));
-        vm.assume(_to != tokenSystemAddress);
+        vm.assume(_to != TOKEN_SYSTEM_ADDRESS);
         vm.assume(_amount > 0);
 
         vm.mockCall(
-            address(USDC),
+            address(TOKEN),
             abi.encodeWithSelector(MockMintBurnToken.transfer.selector),
             abi.encode(false)
         );
 
-        vm.prank(tokenSystemAddress);
+        vm.prank(TOKEN_SYSTEM_ADDRESS);
         vm.expectRevert("Transfer operation failed");
         coreDepositWallet.transfer(_to, _amount);
     }
 
-    function testTransfer_revertsWhenPaused(address _to, uint256 _amount, address _pauser) public {
+    function testTransfer_revertsWhenPaused(
+        address _to,
+        uint256 _amount,
+        address _pauser
+    ) public {
         vm.assume(_pauser != address(0));
         vm.assume(_to != address(0));
         vm.assume(_amount > 0);
 
-        vm.prank(owner);
+        vm.prank(coreDepositWalletOwner);
         coreDepositWallet.updatePauser(_pauser);
 
         vm.prank(_pauser);
@@ -421,19 +555,25 @@ contract CoreDepositWalletTest is Test, TestUtils {
     }
 
     function testInitialize_emitsEvents() public {
-        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(address(coreDepositWalletImpl), proxyAdmin, bytes(""));
+        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
+            address(coreDepositWalletImpl),
+            coreDepositWalletProxyAdmin,
+            bytes("")
+        );
 
-        CoreDepositWallet _coreDepositWallet = CoreDepositWallet(address(_proxy));
+        CoreDepositWallet _coreDepositWallet = CoreDepositWallet(
+            address(_proxy)
+        );
 
         vm.expectEmit(true, true, true, true);
-        emit OwnershipTransferred(address(0), owner);
+        emit OwnershipTransferred(address(0), coreDepositWalletOwner);
 
         vm.expectEmit(true, true, true, true);
-        emit PauserChanged(pauser);
+        emit PauserChanged(coreDepositWalletPauser);
 
         vm.expectEmit(true, true, true, true);
-        emit RescuerChanged(rescuer);
+        emit RescuerChanged(coreDepositWalletRescuer);
 
-        _coreDepositWallet.initialize(roles);
+        _coreDepositWallet.initialize(coreDepositWalletRoles);
     }
 }

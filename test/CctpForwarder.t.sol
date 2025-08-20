@@ -21,14 +21,15 @@ pragma abicoder v2;
 import {BurnMessageV2} from "@evm-cctp-contracts/messages/v2/BurnMessageV2.sol";
 import {MessageV2} from "@evm-cctp-contracts/messages/v2/MessageV2.sol";
 import {AddressUtils} from "@evm-cctp-contracts/messages/v2/AddressUtils.sol";
-import {Test, console} from "forge-std/Test.sol";
-import {CctpForwarder} from "../src/CctpForwarder.sol";
-import {MockMintBurnToken} from "lib/evm-cctp-contracts/test/mocks/MockMintBurnToken.sol";
-import {MockMessageTransmitterV2, MockTokenMessengerV2, MockTokenMinterV2, MockStatefulTokenMessengerV2} from "./mocks/MockCctpContracts.sol";
-import {MockCoreDepositWallet} from "./mocks/MockCoreDepositWallet.sol";
+import {AdminUpgradableProxy} from "@evm-cctp-contracts/proxy/AdminUpgradableProxy.sol";
+import {DeployScriptTestUtils} from "./DeployScriptTestUtils.s.sol";
+import {console} from "forge-std/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {MockCoreDepositWallet} from "./mocks/MockCoreDepositWallet.sol";
+import {CctpForwarder} from "../src/CctpForwarder.sol";
+import {MockMessageTransmitterV2, MockStatefulTokenMessengerV2} from "./mocks/MockCctpContracts.sol";
 
-contract CctpForwarderTest is Test {
+contract CctpForwarderTest is DeployScriptTestUtils {
     // Events for testing
     event MintAndForward(
         address indexed forwardRecipient,
@@ -37,20 +38,7 @@ contract CctpForwarderTest is Test {
         uint256 amount
     );
 
-    MockMintBurnToken public TOKEN = new MockMintBurnToken();
-    MockMessageTransmitterV2 public MESSAGE_TRANSMITTER =
-        new MockMessageTransmitterV2(address(TOKEN));
-    MockTokenMinterV2 public TOKEN_MINTER =
-        new MockTokenMinterV2(address(TOKEN));
-    MockTokenMessengerV2 public TOKEN_MESSENGER =
-        new MockTokenMessengerV2(address(TOKEN_MINTER));
-    MockCoreDepositWallet public CORE_DEPOSIT_WALLET =
-        new MockCoreDepositWallet();
-
-    CctpForwarder public forwarder;
-
     // ============ Default Burn Message ============
-    uint32 constant BURN_VERSION = 1;
     bytes32 BURN_TOKEN;
     bytes32 MINT_RECIPIENT;
     uint256 constant AMOUNT = 100;
@@ -67,7 +55,6 @@ contract CctpForwarderTest is Test {
         );
 
     // ============ Default Message ============
-    uint32 constant MESSAGE_VERSION = 1;
     uint32 constant SOURCE_DOMAIN = 1;
     uint32 constant DESTINATION_DOMAIN = 19;
     bytes32 constant SENDER = bytes32(0);
@@ -81,20 +68,12 @@ contract CctpForwarderTest is Test {
     using AddressUtils for address;
 
     function setUp() public {
-        // TODO: setup through proxy and initializer
-        forwarder = new CctpForwarder(
-            address(MESSAGE_TRANSMITTER),
-            MESSAGE_VERSION,
-            BURN_VERSION
-        );
-        forwarder.addTokenForwardingAddress(
-            address(TOKEN),
-            address(CORE_DEPOSIT_WALLET)
-        );
+        _deployImplementations();
+        _deployProxies();
 
-        BURN_TOKEN = address(TOKEN).toBytes32();
+        BURN_TOKEN = TOKEN.toBytes32();
         MINT_RECIPIENT = address(forwarder).toBytes32();
-        RECIPIENT = address(TOKEN_MESSENGER).toBytes32();
+        RECIPIENT = TOKEN_MESSENGER.toBytes32();
     }
 
     function emptyBytes() internal pure returns (bytes calldata result) {
@@ -158,6 +137,27 @@ contract CctpForwarderTest is Test {
         new CctpForwarder(address(0), MESSAGE_VERSION, BURN_VERSION);
     }
 
+    function test_Initialize_revertsIfTokensForwardingAddressesNotSameLength()
+        public
+    {
+        // Create a fresh CctpForwarder proxy to test initialization
+        AdminUpgradableProxy freshProxy = new AdminUpgradableProxy(
+            address(forwarderImpl),
+            address(0x2222), // proxy admin
+            bytes("") // no initializer
+        );
+        CctpForwarder freshForwarder = CctpForwarder(address(freshProxy));
+
+        vm.expectRevert(
+            "Tokens and forwarding addresses must be the same length"
+        );
+        freshForwarder.initialize(
+            address(123),
+            new address[](1), // tokens array with 1 element
+            new address[](0) // forwarding addresses array with 0 elements
+        );
+    }
+
     function test_MintAndForward_revertsIfInvalidMessage() public {
         bytes memory message = "";
         vm.expectRevert("Invalid message: too short");
@@ -213,7 +213,7 @@ contract CctpForwarderTest is Test {
 
     function test_MintAndForward_revertsIfForwardingAddressNotSet() public {
         // Remove forwarding address
-        forwarder.removeTokenForwardingAddress(address(TOKEN));
+        forwarder.removeTokenForwardingAddress(TOKEN);
 
         bytes memory burnMessage = _formatBurnMessageForRelay(
             BURN_VERSION,
@@ -391,7 +391,7 @@ contract CctpForwarderTest is Test {
         // Test cases: zero address, TOKEN address, and deposit wallet address
         address[3] memory invalidRecipients = [
             address(0), // zero address
-            address(TOKEN), // TOKEN address
+            TOKEN, // TOKEN address
             address(CORE_DEPOSIT_WALLET) // deposit wallet address
         ];
 
@@ -449,7 +449,7 @@ contract CctpForwarderTest is Test {
             burnMessage
         );
         vm.mockCall(
-            address(TOKEN),
+            TOKEN,
             abi.encodeWithSelector(
                 IERC20.approve.selector,
                 address(CORE_DEPOSIT_WALLET),
@@ -519,7 +519,7 @@ contract CctpForwarderTest is Test {
         );
         // Receives
         vm.expectCall(
-            address(MESSAGE_TRANSMITTER),
+            MESSAGE_TRANSMITTER,
             abi.encodeWithSelector(
                 MockMessageTransmitterV2.receiveMessage.selector,
                 message,
@@ -528,7 +528,7 @@ contract CctpForwarderTest is Test {
         );
         // Approves
         vm.expectCall(
-            address(TOKEN),
+            TOKEN,
             abi.encodeWithSelector(
                 IERC20.approve.selector,
                 address(CORE_DEPOSIT_WALLET),
@@ -550,7 +550,7 @@ contract CctpForwarderTest is Test {
         emit MintAndForward(
             FORWARD_RECIPIENT,
             address(CORE_DEPOSIT_WALLET),
-            address(TOKEN),
+            TOKEN,
             AMOUNT - FEE_EXECUTED
         );
         forwarder.mintAndForward(message, VALID_SIGNATURE);
@@ -585,7 +585,7 @@ contract CctpForwarderTest is Test {
         public
     {
         bytes memory burnMessage = _formatBurnMessageForRelay(
-            2, // unsupported burn message version
+            3, // unsupported burn message version
             BURN_TOKEN,
             MINT_RECIPIENT,
             AMOUNT,
@@ -692,7 +692,7 @@ contract CctpForwarderTest is Test {
         emit MintAndForward(
             FORWARD_RECIPIENT,
             address(CORE_DEPOSIT_WALLET),
-            address(TOKEN),
+            TOKEN,
             AMOUNT - FEE_EXECUTED
         );
         // Currently no magic bytes validation is implemented, so this should succeed

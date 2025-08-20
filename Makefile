@@ -15,3 +15,15 @@ anvil:
 
 clean:
 	@${FOUNDRY} "forge clean"
+
+simulate-deploy-implementations:
+	forge script scripts/DeployImplementations.s.sol:DeployImplementationsScript --rpc-url ${RPC_URL} --sender ${SENDER}
+
+deploy-implementations:
+	forge script scripts/DeployImplementations.s.sol:DeployImplementationsScript --rpc-url ${RPC_URL} --sender ${SENDER} --broadcast
+
+simulate-deploy-proxies:
+	forge script scripts/DeployProxies.s.sol:DeployProxiesScript --rpc-url ${RPC_URL} --sender ${SENDER}
+
+deploy-proxies:
+	forge script scripts/DeployProxies.s.sol:DeployProxiesScript --rpc-url ${RPC_URL} --sender ${SENDER} --broadcast
