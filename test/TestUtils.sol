@@ -91,7 +91,6 @@ contract TestUtils is Test {
         vm.prank(_nonOwner);
         vm.expectRevert("Ownable: caller is not the owner");
         _pausableContract.updatePauser(_newPauser);
-        vm.stopPrank();
 
         // Check that owner can rotate pauser, and it emits an event
         vm.expectEmit(true, true, true, true);
@@ -181,7 +180,6 @@ contract TestUtils is Test {
         vm.prank(_nonRescuer);
         vm.expectRevert("Ownable: caller is not the owner");
         _rescuableContract.updateRescuer(_nonRescuer);
-        vm.stopPrank();
     }
 
     function expectRevertWithWrongOwner(address wrongOwner) public {
@@ -241,7 +239,6 @@ contract TestUtils is Test {
         vm.prank(_nonOwner);
         vm.expectRevert("Ownable: caller is not the owner");
         _ownableContract.transferOwnership(_newOwner);
-        vm.stopPrank();
     }
 
     function acceptOwnership_revertsFromNonPendingOwner(
@@ -258,7 +255,6 @@ contract TestUtils is Test {
         // First, transfer ownership
         vm.prank(_initialOwner);
         _ownableContract.transferOwnership(_newOwner);
-        vm.stopPrank();
         assertEq(_ownableContract.owner(), _initialOwner);
         assertEq(_ownableContract.pendingOwner(), _newOwner);
 
@@ -266,7 +262,6 @@ contract TestUtils is Test {
         vm.prank(_nonOwner);
         vm.expectRevert("Ownable2Step: caller is not the new owner");
         _ownableContract.acceptOwnership();
-        vm.stopPrank();
     }
 
     function transferOwnershipAndAcceptOwnership(

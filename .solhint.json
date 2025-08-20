@@ -15,6 +15,12 @@
         }
       }
     ],
-    "import-path-check": "off"
+    "import-path-check": "off",
+    "func-visibility": [
+      "warn",
+      {
+        "ignoreConstructors": true
+      }
+    ]
   }
 }
