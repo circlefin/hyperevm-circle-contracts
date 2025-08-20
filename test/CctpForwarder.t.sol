@@ -21,15 +21,20 @@ pragma abicoder v2;
 import {BurnMessageV2} from "@evm-cctp-contracts/messages/v2/BurnMessageV2.sol";
 import {MessageV2} from "@evm-cctp-contracts/messages/v2/MessageV2.sol";
 import {AddressUtils} from "@evm-cctp-contracts/messages/v2/AddressUtils.sol";
+import {TestUtils} from "./TestUtils.sol";
+import {CctpForwarder} from "../src/CctpForwarder.sol";
+import {MockMintBurnToken} from "lib/evm-cctp-contracts/test/mocks/MockMintBurnToken.sol";
 import {AdminUpgradableProxy} from "@evm-cctp-contracts/proxy/AdminUpgradableProxy.sol";
+import {MockMessageTransmitterV2, MockTokenMessengerV2, MockTokenMinterV2, MockStatefulTokenMessengerV2} from "./mocks/MockCctpContracts.sol";
+import {MockCctpForwarderV2} from "./mocks/MockCctpForwarderV2.sol";
+import {MockCoreDepositWallet} from "./mocks/MockCoreDepositWallet.sol";
 import {DeployScriptTestUtils} from "./DeployScriptTestUtils.s.sol";
-import {console} from "forge-std/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockCoreDepositWallet} from "./mocks/MockCoreDepositWallet.sol";
 import {CctpForwarder} from "../src/CctpForwarder.sol";
 import {MockMessageTransmitterV2, MockStatefulTokenMessengerV2} from "./mocks/MockCctpContracts.sol";
 
-contract CctpForwarderTest is DeployScriptTestUtils {
+contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     // Events for testing
     event MintAndForward(
         address indexed forwardRecipient,
@@ -37,6 +42,10 @@ contract CctpForwarderTest is DeployScriptTestUtils {
         address indexed token,
         uint256 amount
     );
+
+    event ForwardingAddressAdded(address token, address forwardingAddress);
+
+    event ForwardingAddressRemoved(address token, address forwardingAddress);
 
     // ============ Default Burn Message ============
     bytes32 BURN_TOKEN;
@@ -132,30 +141,26 @@ contract CctpForwarderTest is DeployScriptTestUtils {
             );
     }
 
+    function test_Constructor_setsExpectedValues() public {
+        CctpForwarder _forwarder = new CctpForwarder(
+            MESSAGE_TRANSMITTER,
+            MESSAGE_VERSION,
+            BURN_VERSION
+        );
+        assertEq(address(_forwarder.messageTransmitter()), MESSAGE_TRANSMITTER);
+        assertEq(
+            uint256(_forwarder.supportedMessageVersion()),
+            uint256(MESSAGE_VERSION)
+        );
+        assertEq(
+            uint256(_forwarder.supportedBurnMessageVersion()),
+            uint256(BURN_VERSION)
+        );
+    }
+
     function test_Constructor_revertsIfMessageTransmitterNotSet() public {
         vm.expectRevert("MessageTransmitter not set");
         new CctpForwarder(address(0), MESSAGE_VERSION, BURN_VERSION);
-    }
-
-    function test_Initialize_revertsIfTokensForwardingAddressesNotSameLength()
-        public
-    {
-        // Create a fresh CctpForwarder proxy to test initialization
-        AdminUpgradableProxy freshProxy = new AdminUpgradableProxy(
-            address(forwarderImpl),
-            address(0x2222), // proxy admin
-            bytes("") // no initializer
-        );
-        CctpForwarder freshForwarder = CctpForwarder(address(freshProxy));
-
-        vm.expectRevert(
-            "Tokens and forwarding addresses must be the same length"
-        );
-        freshForwarder.initialize(
-            address(123),
-            new address[](1), // tokens array with 1 element
-            new address[](0) // forwarding addresses array with 0 elements
-        );
     }
 
     function test_MintAndForward_revertsIfInvalidMessage() public {
@@ -212,6 +217,7 @@ contract CctpForwarderTest is DeployScriptTestUtils {
     }
 
     function test_MintAndForward_revertsIfForwardingAddressNotSet() public {
+        vm.prank(cctpForwarderOwner);
         // Remove forwarding address
         forwarder.removeTokenForwardingAddress(TOKEN);
 
@@ -699,5 +705,350 @@ contract CctpForwarderTest is DeployScriptTestUtils {
         forwarder.mintAndForward(message, VALID_SIGNATURE);
     }
 
-    // Rescuable
+    function testAddTokenForwardingAddress_succeeds(
+        address token,
+        address forwardingAddress
+    ) public {
+        vm.assume(token != address(TOKEN));
+        vm.assume(forwardingAddress != address(0));
+
+        vm.prank(cctpForwarderOwner);
+        vm.expectEmit(true, true, true, true);
+        emit ForwardingAddressAdded(token, forwardingAddress);
+        forwarder.addTokenForwardingAddress(token, forwardingAddress);
+        assertEq(forwarder.tokenToForwardingAddress(token), forwardingAddress);
+    }
+
+    function testAddTokenForwardingAddress_revertsOnNonOwner(
+        address caller,
+        address token,
+        address forwardingAddress
+    ) public {
+        vm.assume(caller != forwarder.owner());
+        vm.assume(token != address(0));
+        vm.assume(forwardingAddress != address(0));
+
+        vm.prank(caller);
+        vm.expectRevert("Ownable: caller is not the owner");
+        forwarder.addTokenForwardingAddress(token, forwardingAddress);
+    }
+
+    function testAddTokenForwardingAddress_revertsOnZeroForwardingAddress(
+        address token
+    ) public {
+        vm.assume(token != address(TOKEN));
+
+        vm.prank(cctpForwarderOwner);
+        vm.expectRevert("Zero address not allowed");
+        forwarder.addTokenForwardingAddress(token, address(0));
+    }
+
+    function testAddTokenForwardingAddress_revertsOnExistingTokenForwardingAddress(
+        address forwardingAddress
+    ) public {
+        vm.assume(forwardingAddress != address(0));
+
+        vm.prank(cctpForwarderOwner);
+        vm.expectRevert("Forwarding address already set");
+        forwarder.addTokenForwardingAddress(address(TOKEN), forwardingAddress);
+    }
+
+    function testRemoveTokenForwardingAddress_succeeds() public {
+        vm.prank(cctpForwarderOwner);
+        vm.expectEmit(true, true, true, true);
+        emit ForwardingAddressRemoved(
+            address(TOKEN),
+            address(CORE_DEPOSIT_WALLET)
+        );
+        forwarder.removeTokenForwardingAddress(address(TOKEN));
+        assertEq(
+            forwarder.tokenToForwardingAddress(address(TOKEN)),
+            address(0)
+        );
+    }
+
+    function testRemoveTokenForwardingAddress_revertsOnNonOwner(
+        address caller,
+        address token
+    ) public {
+        vm.assume(caller != forwarder.owner());
+        vm.assume(token != address(0));
+
+        vm.prank(caller);
+        vm.expectRevert("Ownable: caller is not the owner");
+        forwarder.removeTokenForwardingAddress(token);
+    }
+
+    function testRemoveTokenForwardingAddress_revertsOnTokenNotInTokenForwardingAddress(
+        address token
+    ) public {
+        vm.assume(token != address(TOKEN));
+
+        vm.prank(cctpForwarderOwner);
+        vm.expectRevert("Token forwarding address not set");
+        forwarder.removeTokenForwardingAddress(token);
+    }
+
+    // Ownable tests
+
+    function testTransferOwnershipAndAcceptOwnership_succeeds(
+        address _newOwner
+    ) public {
+        vm.assume(_newOwner != forwarder.owner());
+        transferOwnershipAndAcceptOwnership(address(forwarder), _newOwner);
+    }
+
+    function testTransferOwnership_revertsOnNonOwner(
+        address _notOwner,
+        address _newOwner
+    ) public {
+        vm.assume(_notOwner != forwarder.owner());
+        transferOwnershipFailsIfNotOwner(
+            address(forwarder),
+            _notOwner,
+            _newOwner
+        );
+    }
+
+    function testAcceptOwnership_revertsOnNonPendingOwner(
+        address _newOwner,
+        address _otherAccount
+    ) public {
+        vm.assume(_newOwner != _otherAccount);
+        acceptOwnershipFailsIfNotPendingOwner(
+            address(forwarder),
+            _newOwner,
+            _otherAccount
+        );
+    }
+
+    function testTransferOwnershipWithoutAcceptingThenTransferToNewOwner_succeeds(
+        address _newOwner,
+        address _secondNewOwner
+    ) public {
+        transferOwnershipWithoutAcceptingThenTransferToNewOwner(
+            address(forwarder),
+            _newOwner,
+            _secondNewOwner
+        );
+    }
+
+    // Rescuable tests
+
+    function testRescuable() public {
+        assertContractIsRescuable(
+            address(forwarder),
+            cctpForwarderRescuer,
+            address(100),
+            100,
+            address(200)
+        );
+    }
+
+    // Proxy tests
+
+    function testInitialize_revertsIfOwnerIsZeroAddress() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(TOKEN);
+
+        address[] memory wallets = new address[](1);
+        wallets[0] = address(CORE_DEPOSIT_WALLET);
+
+        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
+            address(forwarderImpl),
+            cctpForwarderProxyAdmin,
+            bytes("")
+        );
+        vm.expectRevert("Invalid roles.owner: zero address");
+        CctpForwarder(address(_proxy)).initialize(
+            CctpForwarder.CctpForwarderRoles({
+                owner: address(0),
+                rescuer: cctpForwarderRescuer
+            }),
+            tokens,
+            wallets
+        );
+    }
+
+    function testInitialize_revertsIfRescuerIsZeroAddress() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(TOKEN);
+
+        address[] memory wallets = new address[](1);
+        wallets[0] = address(CORE_DEPOSIT_WALLET);
+
+        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
+            address(forwarderImpl),
+            cctpForwarderProxyAdmin,
+            bytes("")
+        );
+        vm.expectRevert("Rescuable: new rescuer is the zero address");
+        CctpForwarder(address(_proxy)).initialize(
+            CctpForwarder.CctpForwarderRoles({
+                owner: cctpForwarderOwner,
+                rescuer: address(0)
+            }),
+            tokens,
+            wallets
+        );
+    }
+
+    function testInitialize_revertsIfForwardingAddressIsZeroAddress() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(TOKEN);
+
+        address[] memory wallets = new address[](1);
+        wallets[0] = address(0);
+
+        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
+            address(forwarderImpl),
+            cctpForwarderProxyAdmin,
+            bytes("")
+        );
+        vm.expectRevert("Zero address not allowed");
+        CctpForwarder(address(_proxy)).initialize(
+            cctpForwarderRoles,
+            tokens,
+            wallets
+        );
+    }
+
+    function testInitialize_revertsIfAddingDuplicateForwardingAddress() public {
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(TOKEN);
+        tokens[1] = address(TOKEN);
+
+        address[] memory wallets = new address[](2);
+        wallets[0] = address(CORE_DEPOSIT_WALLET);
+        wallets[1] = address(CORE_DEPOSIT_WALLET);
+
+        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
+            address(forwarderImpl),
+            cctpForwarderProxyAdmin,
+            bytes("")
+        );
+        vm.expectRevert("Forwarding address already set");
+        CctpForwarder(address(_proxy)).initialize(
+            cctpForwarderRoles,
+            tokens,
+            wallets
+        );
+    }
+
+    function test_Initialize_revertsIfTokensForwardingAddressesNotSameLength()
+        public
+    {
+        // Create a fresh CctpForwarder proxy to test initialization
+        AdminUpgradableProxy freshProxy = new AdminUpgradableProxy(
+            address(forwarderImpl),
+            address(0x2222), // proxy admin
+            bytes("") // no initializer
+        );
+        CctpForwarder freshForwarder = CctpForwarder(address(freshProxy));
+
+        vm.expectRevert(
+            "Tokens and forwarding addresses must be the same length"
+        );
+        freshForwarder.initialize(
+            CctpForwarder.CctpForwarderRoles({
+                owner: cctpForwarderOwner,
+                rescuer: cctpForwarderRescuer
+            }),
+            new address[](1), // tokens array with 1 element
+            new address[](0) // forwarding addresses array with 0 elements
+        );
+    }
+
+    function testInitialize_setsExpectedValues() public view {
+        assertEq(forwarder.owner(), cctpForwarderOwner);
+        assertEq(forwarder.rescuer(), cctpForwarderRescuer);
+        assertEq(
+            forwarder.tokenToForwardingAddress(address(TOKEN)),
+            address(CORE_DEPOSIT_WALLET)
+        );
+    }
+
+    function testInitialize_canBeCalledAtomicallyByTheProxy() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(TOKEN);
+
+        address[] memory wallets = new address[](1);
+        wallets[0] = address(CORE_DEPOSIT_WALLET);
+
+        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
+            address(forwarderImpl),
+            cctpForwarderProxyAdmin,
+            abi.encodeWithSelector(
+                CctpForwarder.initialize.selector,
+                cctpForwarderRoles,
+                tokens,
+                wallets
+            )
+        );
+        assertEq(CctpForwarder(address(_proxy)).owner(), cctpForwarderOwner);
+        assertEq(
+            CctpForwarder(address(_proxy)).rescuer(),
+            cctpForwarderRescuer
+        );
+        assertEq(
+            CctpForwarder(address(_proxy)).tokenToForwardingAddress(
+                address(TOKEN)
+            ),
+            address(CORE_DEPOSIT_WALLET)
+        );
+    }
+
+    function testInitialize_revertsIfCalledTwice() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(TOKEN);
+
+        address[] memory wallets = new address[](1);
+        wallets[0] = address(CORE_DEPOSIT_WALLET);
+
+        vm.expectRevert("Initializable: invalid initialization");
+        forwarder.initialize(cctpForwarderRoles, tokens, wallets);
+    }
+
+    function testInitialize_revertsIfCalledOnImplementation() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(TOKEN);
+
+        address[] memory wallets = new address[](1);
+        wallets[0] = address(CORE_DEPOSIT_WALLET);
+
+        vm.expectRevert("Initializable: invalid initialization");
+        forwarderImpl.initialize(cctpForwarderRoles, tokens, wallets);
+    }
+
+    function testUpgrade_succeeds() public {
+        AdminUpgradableProxy _proxy = AdminUpgradableProxy(
+            payable(address(forwarder))
+        );
+
+        // Sanity check
+        assertEq(_proxy.implementation(), address(forwarderImpl));
+
+        // Test that we can upgrade to a v2 CctpForwarder
+        // Deploy v2 implementation
+        MockCctpForwarderV2 _implV2 = new MockCctpForwarderV2(
+            MESSAGE_TRANSMITTER,
+            MESSAGE_VERSION + 1,
+            BURN_VERSION
+        );
+
+        // Upgrade
+        vm.prank(cctpForwarderProxyAdmin);
+        vm.expectEmit(true, true, true, true);
+        emit Upgraded(address(_implV2));
+        _proxy.upgradeTo(address(_implV2));
+
+        // Sanity checks
+        assertEq(_proxy.implementation(), address(_implV2));
+        assertTrue(MockCctpForwarderV2(address(_proxy)).v2Function());
+        // Check that the supportedMessageVersion is updated
+        assertEq(
+            uint256(forwarder.supportedMessageVersion()),
+            uint256(MESSAGE_VERSION + 1)
+        );
+    }
 }

@@ -41,6 +41,7 @@ contract DeployProxiesScript is Script {
     address private cctpForwarderImplementation;
     address private cctpForwarderProxyAdminAddress;
     address private cctpForwarderOwnerAddress;
+    address private cctpForwarderRescuerAddress;
     address[] private cctpForwarderTokens = new address[](1);
     address[] private cctpForwarderForwardingAddresses = new address[](1);
 
@@ -76,7 +77,10 @@ contract DeployProxiesScript is Script {
         // Construct initializer
         bytes memory initializer = abi.encodeWithSelector(
             CctpForwarder.initialize.selector,
-            cctpForwarderOwnerAddress,
+            CctpForwarder.CctpForwarderRoles({
+                owner: cctpForwarderOwnerAddress,
+                rescuer: cctpForwarderRescuerAddress
+            }),
             cctpForwarderTokens,
             cctpForwarderForwardingAddresses
         );
@@ -130,6 +134,9 @@ contract DeployProxiesScript is Script {
         );
         cctpForwarderOwnerAddress = vm.envAddress(
             "CCTP_FORWARDER_OWNER_ADDRESS"
+        );
+        cctpForwarderRescuerAddress = vm.envAddress(
+            "CCTP_FORWARDER_RESCUER_ADDRESS"
         );
         cctpForwarderTokens[0] = vm.envAddress("CCTP_FORWARDER_TOKEN_ADDRESS");
         cctpForwarderForwardingAddresses[0] = vm.envAddress(

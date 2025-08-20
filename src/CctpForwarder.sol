@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 pragma solidity 0.7.6;
+pragma abicoder v2;
 
 import {IReceiver} from "@evm-cctp-contracts/interfaces/IReceiver.sol";
 import {MessageV2} from "@evm-cctp-contracts/messages/v2/MessageV2.sol";
@@ -27,6 +28,7 @@ import {TypedMemView} from "@memview-sol/contracts/TypedMemView.sol";
 import {SafeMath} from "@openzeppelin/contracts/math/SafeMath.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ICctpForwarder} from "./interfaces/ICctpForwarder.sol";
+import {Rescuable} from "./roles/Rescuable.sol";
 import {IForwardDepositReceiver} from "./interfaces/IForwardDepositReceiver.sol";
 import {CctpForwarderHookData} from "./messages/CctpForwarderHookData.sol";
 
@@ -34,14 +36,20 @@ import {CctpForwarderHookData} from "./messages/CctpForwarderHookData.sol";
  * @title CctpForwarder
  * @notice Mint token via CCTP and forward to forwarding address on behalf of the forward recipient
  */
-contract CctpForwarder is ICctpForwarder, Initializable {
+contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
+    // ============ Structs ============
+    struct CctpForwarderRoles {
+        address owner;
+        address rescuer;
+    }
+
     // ============ Events ============
     /**
      * @notice Emitted when a token is minted and forwarded
-     * @param token Local token address
-     * @param amount Amount minted
      * @param forwardRecipient Forward recipient
      * @param forwardingAddress Forwarding address
+     * @param token Local token address
+     * @param amount Amount minted
      */
     event MintAndForward(
         address indexed forwardRecipient,
@@ -107,21 +115,23 @@ contract CctpForwarder is ICctpForwarder, Initializable {
     /**
      * @notice Initializes the forwarder contract
      * @dev Reverts if the tokens and forwarding addresses are not the same length
-     * @param _owner Owner of the forwarder
+     * @param roles Roles configuration
      * @param _tokens Local token addresses
      * @param _forwardingAddresses Forwarding addresses
      */
     function initialize(
-        address _owner,
+        CctpForwarderRoles calldata roles,
         address[] calldata _tokens,
         address[] calldata _forwardingAddresses
     ) external initializer {
+        require(roles.owner != address(0), "Invalid roles.owner: zero address");
         require(
             _tokens.length == _forwardingAddresses.length,
             "Tokens and forwarding addresses must be the same length"
         );
 
-        // TODO: transfer ownership
+        _transferOwnership(roles.owner);
+        _updateRescuer(roles.rescuer);
 
         uint256 _tokensLength = _tokens.length;
         for (uint256 i; i < _tokensLength; ++i) {
@@ -203,9 +213,7 @@ contract CctpForwarder is ICctpForwarder, Initializable {
     function addTokenForwardingAddress(
         address token,
         address forwardingAddress
-    ) external {
-        // TODO: onlyOwner
-
+    ) external onlyOwner {
         _addTokenForwardingAddress(token, forwardingAddress);
     }
 
@@ -213,8 +221,7 @@ contract CctpForwarder is ICctpForwarder, Initializable {
      * @notice Remove a token forwarding address
      * @param token Local token address
      */
-    function removeTokenForwardingAddress(address token) external {
-        // TODO: onlyOwner
+    function removeTokenForwardingAddress(address token) external onlyOwner {
         address removedForwardingAddress = tokenToForwardingAddress[token];
         require(
             removedForwardingAddress != address(0),

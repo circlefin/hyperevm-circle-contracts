@@ -23,6 +23,7 @@ import {AdminUpgradableProxy} from "@evm-cctp-contracts/proxy/AdminUpgradablePro
 import {MockMintBurnToken} from "lib/evm-cctp-contracts/test/mocks/MockMintBurnToken.sol";
 import {MockMessageTransmitterV2, MockTokenMessengerV2, MockTokenMinterV2, MockStatefulTokenMessengerV2} from "../mocks/MockCctpContracts.sol";
 import {CoreDepositWallet} from "../../src/CoreDepositWallet.sol";
+import {CctpForwarder} from "../../src/CctpForwarder.sol";
 
 contract DeployProxiesTest is DeployScriptTestUtils {
     function setUp() public {
@@ -58,7 +59,14 @@ contract DeployProxiesTest is DeployScriptTestUtils {
 
         // verify initializers are disabled
         vm.expectRevert("Initializable: invalid initialization");
-        forwarder.initialize(address(123), new address[](0), new address[](0));
+        forwarder.initialize(
+            CctpForwarder.CctpForwarderRoles({
+                owner: cctpForwarderOwner,
+                rescuer: cctpForwarderRescuer
+            }),
+            new address[](0),
+            new address[](0)
+        );
     }
 
     function test_DeployProxies_deploysCoreDepositWalletSuccessfully() public {

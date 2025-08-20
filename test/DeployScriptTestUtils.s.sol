@@ -61,6 +61,12 @@ contract DeployScriptTestUtils is Test {
         });
     address public cctpForwarderOwner = address(0x6666);
     address public cctpForwarderProxyAdmin = address(0x7777);
+    address public cctpForwarderRescuer = address(0x8888);
+    CctpForwarder.CctpForwarderRoles public cctpForwarderRoles =
+        CctpForwarder.CctpForwarderRoles({
+            owner: cctpForwarderOwner,
+            rescuer: cctpForwarderRescuer
+        });
 
     // Implementations
     CoreDepositWallet public coreDepositWalletImpl;
@@ -134,6 +140,10 @@ contract DeployScriptTestUtils is Test {
         vm.setEnv(
             "CCTP_FORWARDER_OWNER_ADDRESS",
             vm.toString(cctpForwarderOwner)
+        );
+        vm.setEnv(
+            "CCTP_FORWARDER_RESCUER_ADDRESS",
+            vm.toString(cctpForwarderRescuer)
         );
         vm.setEnv("CCTP_FORWARDER_TOKEN_ADDRESS", vm.toString(TOKEN));
         vm.setEnv(

@@ -20,6 +20,7 @@ pragma abicoder v2;
 
 import {DeployScriptTestUtils} from "../DeployScriptTestUtils.s.sol";
 import {CoreDepositWallet} from "../../src/CoreDepositWallet.sol";
+import {CctpForwarder} from "../../src/CctpForwarder.sol";
 import {MockMintBurnToken} from "lib/evm-cctp-contracts/test/mocks/MockMintBurnToken.sol";
 import {MockMessageTransmitterV2, MockTokenMessengerV2, MockTokenMinterV2, MockStatefulTokenMessengerV2} from "../mocks/MockCctpContracts.sol";
 
@@ -34,7 +35,7 @@ contract DeployImplementationsTest is DeployScriptTestUtils {
         // check message transmitter
         assertEq(
             address(forwarderImpl.messageTransmitter()),
-            address(MESSAGE_TRANSMITTER)
+            MESSAGE_TRANSMITTER
         );
 
         // check supported message version
@@ -52,7 +53,10 @@ contract DeployImplementationsTest is DeployScriptTestUtils {
         // verify initializers are disabled
         vm.expectRevert("Initializable: invalid initialization");
         forwarderImpl.initialize(
-            address(123),
+            CctpForwarder.CctpForwarderRoles({
+                owner: cctpForwarderOwner,
+                rescuer: cctpForwarderRescuer
+            }),
             new address[](0),
             new address[](0)
         );
