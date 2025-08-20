@@ -17,23 +17,17 @@
  */
 pragma solidity 0.7.6;
 
-import {IForwardDepositReceiver} from "./IForwardDepositReceiver.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
- * @title ICoreDepositWallet
- * @notice Interface for the core deposit wallet
+ * @title IBlacklistableERC20
+ * @notice Interface for a blacklistable ERC20 token
  */
-interface ICoreDepositWallet is IForwardDepositReceiver {
-    /**
-     * @notice Deposits tokens for the sender.
-     * @param amount The amount of tokens being deposited.
-     */
-    function deposit(uint256 amount) external;
+interface IBlacklistableERC20 is IERC20 {
 
     /**
-     * @notice Handles the token transfer from the ICoreDepositWallet to the recipient.
-     * @param to The address receiving the tokens.
-     * @param amount The amount of tokens being transferred.
+     * @notice Checks if an account is blacklisted
+     * @param _account The address to check
      */
-    function transfer(address to, uint256 amount) external;
+    function isBlacklisted(address _account) external view returns (bool);
 }

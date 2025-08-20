@@ -23,6 +23,7 @@ import {ICoreDepositWallet} from "./interfaces/ICoreDepositWallet.sol";
 import {Pausable} from "@evm-cctp-contracts/roles/Pausable.sol";
 import {Rescuable} from "./roles/Rescuable.sol";
 import {Initializable} from "@evm-cctp-contracts/proxy/Initializable.sol";
+import {IBlacklistableERC20} from "./interfaces/IBlacklistableERC20.sol";
 
 /**
  * @title CoreDepositWallet
@@ -56,7 +57,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     // ============ State Variables ============
 
     // The contract of the HyperEVM token that can be deposited and withdrawn.
-    IERC20 public immutable token;
+    IBlacklistableERC20 public immutable token;
 
     // The system address for the token spot asset on HyperCore.
     address public immutable tokenSystemAddress;
@@ -71,7 +72,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         require(tokenAddress != address(0), "Invalid tokenAddress: zero address");
         require(_tokenSystemAddress != address(0), "Invalid _tokenSystemAddress: zero address");
 
-        token = IERC20(tokenAddress);
+        token = IBlacklistableERC20(tokenAddress);
         tokenSystemAddress = _tokenSystemAddress;
         _disableInitializers();
     }
@@ -108,6 +109,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         require(recipient != address(0), "Invalid recipient: zero address");
         require(recipient != tokenSystemAddress, "Invalid recipient: system address");
         require(recipient != address(this), "Invalid recipient: CoreDepositWallet");
+        require(!token.isBlacklisted(recipient), "Invalid recipient: blacklisted");
         _deposit(sender, recipient, amount);
     }
 
@@ -134,7 +136,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     function _deposit(address _sender, address _recipient, uint256 _amount) internal {
         require(_amount > 0, "Amount must be greater than zero");
         require(token.transferFrom(_sender, address(this), _amount), "Transfer operation failed");
-
+        
         emit Transfer(_recipient, tokenSystemAddress, _amount);
     }
 

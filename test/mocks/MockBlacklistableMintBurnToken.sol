@@ -17,23 +17,16 @@
  */
 pragma solidity 0.7.6;
 
-import {IForwardDepositReceiver} from "./IForwardDepositReceiver.sol";
+import {MockMintBurnToken} from "lib/evm-cctp-contracts/test/mocks/MockMintBurnToken.sol";
 
-/**
- * @title ICoreDepositWallet
- * @notice Interface for the core deposit wallet
- */
-interface ICoreDepositWallet is IForwardDepositReceiver {
-    /**
-     * @notice Deposits tokens for the sender.
-     * @param amount The amount of tokens being deposited.
-     */
-    function deposit(uint256 amount) external;
+contract MockBlacklistableMintBurnToken is MockMintBurnToken {
+    mapping(address => bool) internal blacklisted;
 
-    /**
-     * @notice Handles the token transfer from the ICoreDepositWallet to the recipient.
-     * @param to The address receiving the tokens.
-     * @param amount The amount of tokens being transferred.
-     */
-    function transfer(address to, uint256 amount) external;
+    function isBlacklisted(address _account) external view returns (bool) {
+        return blacklisted[_account];
+    }
+
+    function blacklist(address _account) external {
+        blacklisted[_account] = true;
+    }
 }

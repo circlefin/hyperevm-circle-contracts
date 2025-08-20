@@ -18,6 +18,7 @@ pragma abicoder v2;
 
 import {CoreDepositWallet} from "../src/CoreDepositWallet.sol";
 import {MockMintBurnToken} from "lib/evm-cctp-contracts/test/mocks/MockMintBurnToken.sol";
+import {MockBlacklistableMintBurnToken} from "./mocks/MockBlacklistableMintBurnToken.sol";
 import {AdminUpgradableProxy} from "@evm-cctp-contracts/proxy/AdminUpgradableProxy.sol";
 import {Test} from "forge-std/Test.sol";
 import {TestUtils} from "./TestUtils.sol";
@@ -25,7 +26,11 @@ import {MockCoreDepositWalletV2} from "./mocks/MockCoreDepositWalletV2.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract CoreDepositWalletTest is Test, TestUtils {
-    MockMintBurnToken public USDC = new MockMintBurnToken();
+    event Transfer(address indexed from, address indexed to, uint256 amount);
+
+    event Withdraw(address to, uint256 value);
+
+    MockBlacklistableMintBurnToken public USDC = new MockBlacklistableMintBurnToken();
     CoreDepositWallet public coreDepositWalletImpl;
     CoreDepositWallet public coreDepositWallet;
 
@@ -182,6 +187,44 @@ contract CoreDepositWalletTest is Test, TestUtils {
         coreDepositWallet.rescueERC20(tokenContract, _to, _amount);
     }
 
+    function testDeposit_succeeds(uint256 _amount, address _sender) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+
+        // Mint tokens to the sender
+        USDC.mint(_sender, _amount);
+
+        // Approve the CoreDepositWallet to spend the tokens
+        vm.startPrank(_sender);
+        USDC.approve(address(coreDepositWallet), _amount);
+
+        // Check that the Transfer event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(_sender, tokenSystemAddress, _amount);
+
+        // Deposit tokens into the CoreDepositWallet
+        coreDepositWallet.deposit(_amount);
+        vm.stopPrank();
+
+        // Check the balance of the CoreDepositWallet
+        assertEq(USDC.balanceOf(address(coreDepositWallet)), _amount);
+    }
+
+    function testDeposit_revertsWhenTransferFails(uint256 _amount, address _sender) public {
+        vm.assume(_sender != address(0));
+
+        vm.prank(_sender);
+        vm.mockCall(
+            address(USDC),
+            abi.encodeWithSelector(MockMintBurnToken.transferFrom.selector),
+            abi.encode(false)
+        );
+
+        vm.assume(_amount > 0);
+        vm.expectRevert("Transfer operation failed");
+        coreDepositWallet.deposit(_amount);
+    }
+
     function testDeposit_revertsWhenPaused(uint256 _amount, address _pauser) public {
         vm.assume(_pauser != address(0));
         vm.assume(_amount > 0);
@@ -200,6 +243,86 @@ contract CoreDepositWalletTest is Test, TestUtils {
     function testDeposit_revertsWithZeroAmount() public {
         vm.expectRevert("Amount must be greater than zero");
         coreDepositWallet.deposit(0);
+    }
+
+    function testDepositFor_succeeds(address _sender, address _recipient, uint256 _amount) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+        vm.assume(_recipient != address(0));
+        vm.assume(_recipient != tokenSystemAddress);
+        vm.assume(_recipient != address(coreDepositWallet));
+
+        // Mint tokens to the sender
+        USDC.mint(_sender, _amount);
+
+        // Approve the CoreDepositWallet to spend the tokens
+        vm.startPrank(_sender);
+        USDC.approve(address(coreDepositWallet), _amount);
+
+        // Check that the Transfer event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(_recipient, tokenSystemAddress, _amount);
+
+        // Deposit tokens into the CoreDepositWallet
+        coreDepositWallet.depositFor(_sender, _recipient, _amount);
+        vm.stopPrank();
+
+        // Check the balance of the CoreDepositWallet
+        assertEq(USDC.balanceOf(address(coreDepositWallet)), _amount);
+    }
+
+    function testDepositFor_revertsWhenTransferFails(address _sender, address _recipient, uint256 _amount) public {
+        vm.assume(_sender != address(0));
+        vm.assume(_recipient != address(0));
+        vm.assume(_recipient != tokenSystemAddress);
+        vm.assume(_recipient != address(coreDepositWallet));
+
+        vm.prank(_sender);
+        vm.mockCall(
+            address(USDC),
+            abi.encodeWithSelector(MockMintBurnToken.transferFrom.selector),
+            abi.encode(false)
+        );
+
+        vm.assume(_amount > 0);
+        vm.expectRevert("Transfer operation failed");
+        coreDepositWallet.deposit(_amount);
+    }
+
+    function testDepositFor_revertsWhenRecipientIsZeroAddress(address _sender, uint256 _amount) public {
+        vm.assume(_sender != address(0));
+        vm.assume(_amount > 0);
+
+        vm.expectRevert("Invalid recipient: zero address");
+        coreDepositWallet.depositFor(_sender, address(0), _amount);
+    }
+
+    function testDepositFor_revertsWhenRecipientIsSystemAddress(address _sender, uint256 _amount) public {
+        vm.assume(_sender != address(0));
+        vm.assume(_amount > 0);
+
+        vm.expectRevert("Invalid recipient: system address");
+        coreDepositWallet.depositFor(_sender, tokenSystemAddress, _amount);
+    }
+
+    function testDepositFor_revertsWhenRecipientIsCoreDepositWallet(address _sender, uint256 _amount) public {
+        vm.assume(_sender != address(0));
+        vm.assume(_amount > 0);
+
+        vm.expectRevert("Invalid recipient: CoreDepositWallet");
+        coreDepositWallet.depositFor(_sender, address(coreDepositWallet), _amount);
+    }
+
+    function testDepositFor_revertsWhenRecipientBlocklisted(address _sender, address _recipient, uint256 _amount) public {
+        vm.assume(_sender != address(0));
+        vm.assume(_amount > 0);
+        vm.assume(_recipient != address(0));
+        vm.assume(_recipient != tokenSystemAddress);
+        vm.assume(_recipient != address(coreDepositWallet));
+
+        USDC.blacklist(_recipient);
+        vm.expectRevert("Invalid recipient: blacklisted");
+        coreDepositWallet.depositFor(_sender, _recipient, _amount);
     }
 
     function testDepositFor_revertsWhenPaused(address _sender, address _recipient, uint256 _amount, address _pauser)
@@ -228,6 +351,57 @@ contract CoreDepositWalletTest is Test, TestUtils {
 
         vm.expectRevert("Amount must be greater than zero");
         coreDepositWallet.depositFor(sender, recipient, 0);
+    }
+
+    function testTransfer_succeeds(address _to, uint256 _amount) public {
+        vm.assume(_to != address(0));
+        vm.assume(_to != tokenSystemAddress);
+        vm.assume(_amount > 0);
+
+        // Mint tokens to the CoreDepositWallet
+        USDC.mint(address(coreDepositWallet), _amount);
+
+        // Check that the Withdraw event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Withdraw(_to, _amount);
+        
+        // Transfer tokens from the CoreDepositWallet
+        vm.prank(tokenSystemAddress);
+        coreDepositWallet.transfer(_to, _amount);
+
+        // Check the balance of the _to address
+        assertEq(USDC.balanceOf(_to), _amount);
+    }
+
+    function testTransfer_revertsWhenSenderIsNotSystemAddress(address _to, uint256 _amount) public {
+        vm.assume(_to != tokenSystemAddress);
+        vm.prank(_to);
+
+        vm.expectRevert("Caller is not the system address");
+        coreDepositWallet.transfer(_to, _amount);
+    }
+
+    function testTransfer_revertsWhenToIsSystemAddress(uint256 _amount) public {
+        vm.prank(tokenSystemAddress);
+
+        vm.expectRevert("Invalid to: system address");
+        coreDepositWallet.transfer(tokenSystemAddress, _amount);
+    }
+
+    function testTransfer_revertsWhenTransferFails(address _to, uint256 _amount) public {
+        vm.assume(_to != address(0));
+        vm.assume(_to != tokenSystemAddress);
+        vm.assume(_amount > 0);
+
+        vm.mockCall(
+            address(USDC),
+            abi.encodeWithSelector(MockMintBurnToken.transfer.selector),
+            abi.encode(false)
+        );
+
+        vm.prank(tokenSystemAddress);
+        vm.expectRevert("Transfer operation failed");
+        coreDepositWallet.transfer(_to, _amount);
     }
 
     function testTransfer_revertsWhenPaused(address _to, uint256 _amount, address _pauser) public {
