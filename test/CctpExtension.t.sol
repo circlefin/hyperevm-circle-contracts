@@ -23,8 +23,9 @@ import {MockMintBurnToken} from "lib/evm-cctp-contracts/test/mocks/MockMintBurnT
 import {CctpExtension} from "../src/CctpExtension.sol";
 import {MockEIP3009Token} from "./mocks/MockEIP3009Token.sol";
 import {ICctpExtension} from "../src/interfaces/ICctpExtension.sol";
+import {TestUtils} from "./TestUtils.sol";
 
-contract CctpExtensionTest is Test {
+contract CctpExtensionTest is Test, TestUtils {
     MockEIP3009Token public EIP3009_TOKEN = new MockEIP3009Token();
     CctpExtension public cctpExtension;
 
@@ -1235,14 +1236,37 @@ contract CctpExtensionTest is Test {
         );
     }
 
-    // =========================== Roles Tests ============================
+    // =========================== Ownership Tests ============================
 
-    // TODO: Add tests for owner and rescuer roles
+    function testTransferOwnershipAndAcceptOwnership_succeeds(address _newOwner) public {
+        vm.assume(_newOwner != cctpExtension.owner());
+        transferOwnershipAndAcceptOwnership(address(cctpExtension), _newOwner);
+    }
 
-    //=========================== Event Declarations ============================
+    function testTransferOwnership_revertsOnNonOwner(address _notOwner, address _newOwner) public {
+        transferOwnership_revertsFromNonOwner(address(cctpExtension), _newOwner, _notOwner);
+    }
 
-    // Event declarations to match the expected event signatures
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    function testAcceptOwnership_revertsOnNonPendingOwner(address _newOwner, address _otherAccount) public {
+        acceptOwnership_revertsFromNonPendingOwner(address(cctpExtension), _newOwner, _otherAccount);
+    }
 
-    event RescuerChanged(address indexed newRescuer);
+    function testTransferOwnershipWithoutAcceptingThenTransferToNewOwner_succeeds(
+        address _newOwner,
+        address _secondNewOwner
+    ) public {
+        transferOwnershipWithoutAcceptingThenTransferToNewOwner(address(cctpExtension), _newOwner, _secondNewOwner);
+    }
+
+    // =========================== Rescuer Tests ============================
+
+    function testRescuable() public {
+        assertContractIsRescuable(
+            address(cctpExtension),
+            rescuer,
+            address(100), // rescueRecipient
+            100, // amount
+            address(200) // nonRescuer
+        );
+    }
 }
