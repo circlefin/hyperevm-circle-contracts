@@ -20,44 +20,63 @@ pragma abicoder v2;
 
 import {ICctpExtension} from "./interfaces/ICctpExtension.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
+import {SafeMath} from "@openzeppelin/contracts/math/SafeMath.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Rescuable} from "./roles/Rescuable.sol";
+import {IEIP3009Token} from "./interfaces/IEIP3009Token.sol";
+import {TokenMessengerV2} from "@evm-cctp-contracts/v2/TokenMessengerV2.sol";
 
+/**
+ * @title CctpExtension
+ * @notice Facilitates cross-chain token transfers using ERC-3009 token authorization
+ *         combined with CCTP's deposit-for-burn mechanism. Implements batching
+ *         to optimize gas costs for multiple burn operations.
+ */
 contract CctpExtension is ICctpExtension, Rescuable {
     using SafeERC20 for IERC20;
+    using SafeMath for uint256;
+
+    //=========================== Structs ============================
+
+    /**
+     * @notice Constructor parameters for CctpExtension contract
+     * @param owner The owner address
+     * @param rescuer The rescuer address
+     * @param tokenMessenger The CCTP TokenMessenger contract address
+     * @param token The token contract address
+     */
+    struct ConstructorParams {
+        address owner;
+        address rescuer;
+        address tokenMessenger;
+        address token;
+    }
+
     //=========================== State Variables ============================
 
-    /**
-     * @notice The tokenMessenger contract address.
-     */
+    /// @notice The CCTP TokenMessenger contract address
     address public immutable TOKEN_MESSENGER;
 
-    /**
-     * @notice The token contract address.
-     */
+    /// @notice The token contract address
     address public immutable TOKEN;
 
     //=========================== Constructor ============================
 
-    constructor(
-        address _owner,
-        address _rescuer,
-        address _tokenMessenger,
-        address _token
-    ) {
-        require(_owner != address(0), "Invalid owner address");
-        require(_rescuer != address(0), "Invalid rescuer address");
-        require(_tokenMessenger != address(0), "Invalid tokenMessenger");
-        require(_token != address(0), "Invalid token address");
+    /**
+     * @notice Initializes the CctpExtension contract
+     * @param params The constructor parameters struct
+     */
+    constructor(ConstructorParams memory params) {
+        require(params.owner != address(0), "Invalid owner address");
+        require(params.rescuer != address(0), "Invalid rescuer address");
+        require(params.tokenMessenger != address(0), "Invalid tokenMessenger");
+        require(params.token != address(0), "Invalid token address");
 
-        _transferOwnership(_owner);
-        _updateRescuer(_rescuer);
-        TOKEN_MESSENGER = _tokenMessenger;
-        TOKEN = _token;
-        IERC20(_token).safeIncreaseAllowance(
-            _tokenMessenger,
-            type(uint256).max
-        );
+        _transferOwnership(params.owner);
+        _updateRescuer(params.rescuer);
+        TOKEN_MESSENGER = params.tokenMessenger;
+        TOKEN = params.token;
+        IERC20(params.token).safeIncreaseAllowance(params.tokenMessenger, type(uint256).max);
     }
 
     //=========================== External Functions ============================
@@ -67,6 +86,55 @@ contract CctpExtension is ICctpExtension, Rescuable {
         ReceiveWithAuthorizationData calldata _receiveWithAuthorizationData,
         DepositForBurnWithHookData calldata _depositForBurnData
     ) external override {
-        // TODO: Implement
+        // 1. Pull the total amount from the ERC-3009 authorization
+        IEIP3009Token(TOKEN).receiveWithAuthorization(
+            msg.sender,
+            address(this),
+            _receiveWithAuthorizationData.amount,
+            _receiveWithAuthorizationData.authValidAfter,
+            _receiveWithAuthorizationData.authValidBefore,
+            _receiveWithAuthorizationData.authNonce,
+            _receiveWithAuthorizationData.v,
+            _receiveWithAuthorizationData.r,
+            _receiveWithAuthorizationData.s
+        );
+
+        // 2. Determine the batch size and remaining amount
+        uint256 batchSize = _depositForBurnData.amount;
+        uint256 remaining = _receiveWithAuthorizationData.amount;
+
+        // 3. Perform the deposit for burn with or without hook data
+        if (_depositForBurnData.hookData.length > 0) {
+            // Execute batched burns with hook data
+            while (remaining > 0) {
+                uint256 batchAmount = remaining > batchSize ? batchSize : remaining;
+                TokenMessengerV2(TOKEN_MESSENGER).depositForBurnWithHook(
+                    batchAmount,
+                    _depositForBurnData.destinationDomain,
+                    _depositForBurnData.mintRecipient,
+                    TOKEN,
+                    _depositForBurnData.destinationCaller,
+                    _depositForBurnData.maxFee,
+                    _depositForBurnData.minFinalityThreshold,
+                    _depositForBurnData.hookData
+                );
+                remaining = remaining.sub(batchAmount);
+            }
+        } else {
+            // Execute batched burns without hook data
+            while (remaining > 0) {
+                uint256 batchAmount = remaining > batchSize ? batchSize : remaining;
+                TokenMessengerV2(TOKEN_MESSENGER).depositForBurn(
+                    batchAmount,
+                    _depositForBurnData.destinationDomain,
+                    _depositForBurnData.mintRecipient,
+                    TOKEN,
+                    _depositForBurnData.destinationCaller,
+                    _depositForBurnData.maxFee,
+                    _depositForBurnData.minFinalityThreshold
+                );
+                remaining = remaining.sub(batchAmount);
+            }
+        }
     }
 }

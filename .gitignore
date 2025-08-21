@@ -4,6 +4,8 @@ node_modules/
 __pycache__/
 venv/
 coverage/
+report/
+lcov.info
 
 # Compiler files
 cache/
