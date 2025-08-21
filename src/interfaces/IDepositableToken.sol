@@ -18,12 +18,13 @@
 pragma solidity 0.7.6;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IEIP3009Token} from "./IEIP3009Token.sol";
 
 /**
- * @title IBlacklistableERC20
- * @notice Interface for a blacklistable ERC20 token
+ * @title IDepositableToken
+ * @notice Interface for a token that can be deposited into a CoreDepositWallet
  */
-interface IBlacklistableERC20 is IERC20 {
+interface IDepositableToken is IERC20, IEIP3009Token {
 
     /**
      * @notice Checks if an account is blacklisted

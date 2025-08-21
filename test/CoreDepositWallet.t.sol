@@ -18,7 +18,8 @@ pragma abicoder v2;
 
 import {CoreDepositWallet} from "../src/CoreDepositWallet.sol";
 import {MockMintBurnToken} from "lib/evm-cctp-contracts/test/mocks/MockMintBurnToken.sol";
-import {MockBlacklistableMintBurnToken} from "./mocks/MockBlacklistableMintBurnToken.sol";
+import {MockDepositableToken} from "./mocks/MockDepositableToken.sol";
+import {MockEIP3009Token} from "./mocks/MockEIP3009Token.sol";
 import {AdminUpgradableProxy} from "@evm-cctp-contracts/proxy/AdminUpgradableProxy.sol";
 import {Test} from "forge-std/Test.sol";
 import {TestUtils} from "./TestUtils.sol";
@@ -260,11 +261,11 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_sender != address(0));
 
         // Mint tokens to the sender
-        MockBlacklistableMintBurnToken(TOKEN).mint(_sender, _amount);
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
 
         // Approve the CoreDepositWallet to spend the tokens
         vm.startPrank(_sender);
-        MockBlacklistableMintBurnToken(TOKEN).approve(
+        MockDepositableToken(TOKEN).approve(
             address(coreDepositWallet),
             _amount
         );
@@ -279,7 +280,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Check the balance of the CoreDepositWallet
         assertEq(
-            MockBlacklistableMintBurnToken(TOKEN).balanceOf(
+            MockDepositableToken(TOKEN).balanceOf(
                 address(coreDepositWallet)
             ),
             _amount
@@ -305,16 +306,11 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     }
 
     function testDeposit_revertsWhenPaused(
-        uint256 _amount,
-        address _pauser
+        uint256 _amount
     ) public {
-        vm.assume(_pauser != address(0));
         vm.assume(_amount > 0);
 
-        vm.prank(coreDepositWalletOwner);
-        coreDepositWallet.updatePauser(_pauser);
-
-        vm.prank(_pauser);
+        vm.prank(coreDepositWalletPauser);
         coreDepositWallet.pause();
         assertTrue(coreDepositWallet.paused());
 
@@ -339,11 +335,11 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_recipient != address(coreDepositWallet));
 
         // Mint tokens to the sender
-        MockBlacklistableMintBurnToken(TOKEN).mint(_sender, _amount);
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
 
         // Approve the CoreDepositWallet to spend the tokens
         vm.startPrank(_sender);
-        MockBlacklistableMintBurnToken(TOKEN).approve(
+        MockDepositableToken(TOKEN).approve(
             address(coreDepositWallet),
             _amount
         );
@@ -358,7 +354,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Check the balance of the CoreDepositWallet
         assertEq(
-            MockBlacklistableMintBurnToken(TOKEN).balanceOf(
+            MockDepositableToken(TOKEN).balanceOf(
                 address(coreDepositWallet)
             ),
             _amount
@@ -435,7 +431,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
         vm.assume(_recipient != address(coreDepositWallet));
 
-        MockBlacklistableMintBurnToken(TOKEN).blacklist(_recipient);
+        MockDepositableToken(TOKEN).blacklist(_recipient);
         vm.expectRevert("Invalid recipient: blacklisted");
         coreDepositWallet.depositFor(_sender, _recipient, _amount);
     }
@@ -443,18 +439,13 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     function testDepositFor_revertsWhenPaused(
         address _sender,
         address _recipient,
-        uint256 _amount,
-        address _pauser
+        uint256 _amount
     ) public {
-        vm.assume(_pauser != address(0));
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_amount > 0);
 
-        vm.prank(coreDepositWalletOwner);
-        coreDepositWallet.updatePauser(_pauser);
-
-        vm.prank(_pauser);
+        vm.prank(coreDepositWalletPauser);
         coreDepositWallet.pause();
         assertTrue(coreDepositWallet.paused());
 
@@ -474,13 +465,76 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         coreDepositWallet.depositFor(sender, recipient, 0);
     }
 
+    function testDepositWithAuth_succeeds(
+        uint256 _amount,
+        address _sender
+    ) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+
+        // Mint tokens to the sender
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
+
+        // Check that the Transfer event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(_sender, TOKEN_SYSTEM_ADDRESS, _amount);
+
+        // Deposit tokens into the CoreDepositWallet
+        vm.prank(_sender);
+        coreDepositWallet.depositWithAuth(_amount, 0, 1, bytes32("nonce"), 0, bytes32("s"), bytes32("v"));
+
+        // Check the balance of the CoreDepositWallet
+        assertEq(
+            MockDepositableToken(TOKEN).balanceOf(
+                address(coreDepositWallet)
+            ),
+            _amount
+        );
+    }
+
+    function testDepositWithAuth_revertsWhenPaused(uint256 _amount, address _sender) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+
+        vm.prank(coreDepositWalletPauser);
+        coreDepositWallet.pause();
+        assertTrue(coreDepositWallet.paused());
+
+        vm.expectRevert("Pausable: paused");
+        vm.prank(_sender);
+        coreDepositWallet.depositWithAuth(_amount, 0, 1, bytes32("nonce"), 0, bytes32("s"), bytes32("v"));
+    }
+
+    function testDepositWithAuth_revertsWithZeroAmount(address _sender) public {
+        vm.assume(_sender != address(0));
+
+        vm.expectRevert("Amount must be greater than zero");
+        vm.prank(_sender);
+        coreDepositWallet.depositWithAuth(0, 0, 1, bytes32("nonce"), 0, bytes32("s"), bytes32("v"));
+    }
+
+    function testDepositWithAuth_revertsWhenReceiveFails(uint256 _amount, address _sender) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+
+        vm.mockCallRevert(
+            address(TOKEN),
+            abi.encodeWithSelector(MockEIP3009Token.receiveWithAuthorization.selector),
+            abi.encode("revert")
+        );
+
+        vm.expectRevert();
+        vm.prank(_sender);
+        coreDepositWallet.depositWithAuth(_amount, 0, 1, bytes32("nonce"), 0, bytes32("s"), bytes32("v"));
+    }
+
     function testTransfer_succeeds(address _to, uint256 _amount) public {
         vm.assume(_to != address(0));
         vm.assume(_to != TOKEN_SYSTEM_ADDRESS);
         vm.assume(_amount > 0);
 
         // Mint tokens to the CoreDepositWallet
-        MockBlacklistableMintBurnToken(TOKEN).mint(
+        MockDepositableToken(TOKEN).mint(
             address(coreDepositWallet),
             _amount
         );
@@ -494,7 +548,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         coreDepositWallet.transfer(_to, _amount);
 
         // Check the balance of the _to address
-        assertEq(MockBlacklistableMintBurnToken(TOKEN).balanceOf(_to), _amount);
+        assertEq(MockDepositableToken(TOKEN).balanceOf(_to), _amount);
     }
 
     function testTransfer_revertsWhenSenderIsNotSystemAddress(
@@ -536,17 +590,12 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     function testTransfer_revertsWhenPaused(
         address _to,
-        uint256 _amount,
-        address _pauser
+        uint256 _amount
     ) public {
-        vm.assume(_pauser != address(0));
         vm.assume(_to != address(0));
         vm.assume(_amount > 0);
 
-        vm.prank(coreDepositWalletOwner);
-        coreDepositWallet.updatePauser(_pauser);
-
-        vm.prank(_pauser);
+        vm.prank(coreDepositWalletPauser);
         coreDepositWallet.pause();
         assertTrue(coreDepositWallet.paused());
 

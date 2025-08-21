@@ -18,8 +18,9 @@
 pragma solidity 0.7.6;
 
 import {MockMintBurnToken} from "lib/evm-cctp-contracts/test/mocks/MockMintBurnToken.sol";
+import {MockEIP3009Token} from "./MockEIP3009Token.sol";
 
-contract MockBlacklistableMintBurnToken is MockMintBurnToken {
+contract MockDepositableToken is MockMintBurnToken, MockEIP3009Token {
     mapping(address => bool) internal blacklisted;
 
     function isBlacklisted(address _account) external view returns (bool) {

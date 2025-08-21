@@ -36,4 +36,24 @@ interface ICoreDepositWallet is IForwardDepositReceiver {
      * @param amount The amount of tokens being transferred.
      */
     function transfer(address to, uint256 amount) external;
+
+    /**
+     * @notice Deposits tokens with authorization.
+     * @param amount The amount of tokens being deposited.
+     * @param authValidAfter The timestamp after which the authorization is valid.
+     * @param authValidBefore The timestamp before which the authorization is valid.
+     * @param authNonce A unique nonce for the authorization.
+     * @param v The V value of the signature.
+     * @param r The R value of the signature.
+     * @param s The S value of the signature.
+     */
+    function depositWithAuth(
+        uint256 amount,
+        uint256 authValidAfter,
+        uint256 authValidBefore,
+        bytes32 authNonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external;
 }

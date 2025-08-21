@@ -23,7 +23,7 @@ import {ICoreDepositWallet} from "./interfaces/ICoreDepositWallet.sol";
 import {Pausable} from "@evm-cctp-contracts/roles/Pausable.sol";
 import {Rescuable} from "./roles/Rescuable.sol";
 import {Initializable} from "@evm-cctp-contracts/proxy/Initializable.sol";
-import {IBlacklistableERC20} from "./interfaces/IBlacklistableERC20.sol";
+import {IDepositableToken} from "./interfaces/IDepositableToken.sol";
 
 /**
  * @title CoreDepositWallet
@@ -57,7 +57,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     // ============ State Variables ============
 
     // The contract of the HyperEVM token that can be deposited and withdrawn.
-    IBlacklistableERC20 public immutable token;
+    IDepositableToken public immutable token;
 
     // The system address for the token spot asset on HyperCore.
     address public immutable tokenSystemAddress;
@@ -72,7 +72,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         require(tokenAddress != address(0), "Invalid tokenAddress: zero address");
         require(_tokenSystemAddress != address(0), "Invalid _tokenSystemAddress: zero address");
 
-        token = IBlacklistableERC20(tokenAddress);
+        token = IDepositableToken(tokenAddress);
         tokenSystemAddress = _tokenSystemAddress;
         _disableInitializers();
     }
@@ -111,6 +111,41 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         require(recipient != address(this), "Invalid recipient: CoreDepositWallet");
         require(!token.isBlacklisted(recipient), "Invalid recipient: blacklisted");
         _deposit(sender, recipient, amount);
+    }
+
+    /**
+     * @notice Deposits tokens with authorization to credit the sender on HyperCore. 
+     * @param amount The amount of tokens being deposited.
+     * @param authValidAfter The timestamp after which the authorization is valid.
+     * @param authValidBefore The timestamp before which the authorization is valid.
+     * @param authNonce A unique nonce for the authorization.
+     * @param v The V value of the signature.
+     * @param r The R value of the signature.
+     * @param s The S value of the signature.
+     */
+    function depositWithAuth(
+        uint256 amount,
+        uint256 authValidAfter,
+        uint256 authValidBefore,
+        bytes32 authNonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external override whenNotPaused {
+        require(amount > 0, "Amount must be greater than zero");
+        token.receiveWithAuthorization(
+            msg.sender, 
+            address(this), 
+            amount, 
+            authValidAfter, 
+            authValidBefore, 
+            authNonce, 
+            v, 
+            r, 
+            s
+        );
+
+        emit Transfer(msg.sender, tokenSystemAddress, amount);
     }
 
     /**

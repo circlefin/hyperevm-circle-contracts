@@ -23,7 +23,7 @@ import {DeployImplementationsScript} from "../scripts/DeployImplementations.s.so
 import {DeployProxiesScript} from "../scripts/DeployProxies.s.sol";
 import {CoreDepositWallet} from "../src/CoreDepositWallet.sol";
 import {CctpForwarder} from "../src/CctpForwarder.sol";
-import {MockBlacklistableMintBurnToken} from "./mocks/MockBlacklistableMintBurnToken.sol";
+import {MockDepositableToken} from "./mocks/MockDepositableToken.sol";
 import {MockMessageTransmitterV2, MockTokenMinterV2, MockTokenMessengerV2} from "./mocks/MockCctpContracts.sol";
 import {MockCoreDepositWallet} from "./mocks/MockCoreDepositWallet.sol";
 
@@ -35,7 +35,7 @@ contract DeployScriptTestUtils is Test {
     uint32 public MESSAGE_VERSION = 1;
     uint32 public BURN_VERSION = 2; // Set to 2 to differentiate from MESSAGE_VERSION
 
-    address public TOKEN = address(new MockBlacklistableMintBurnToken());
+    address public TOKEN = address(new MockDepositableToken());
     address public TOKEN_MINTER = address(new MockTokenMinterV2(TOKEN));
     address public TOKEN_MESSENGER =
         address(new MockTokenMessengerV2(address(TOKEN_MINTER)));
