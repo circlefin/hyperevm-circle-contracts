@@ -44,6 +44,8 @@ contract TestUtils is Test {
 
     event Upgraded(address indexed implementation);
 
+    event Initialized(uint64 version);
+
     function assertContractIsPausable(
         address _pausableContractAddress,
         address _currentPauser,

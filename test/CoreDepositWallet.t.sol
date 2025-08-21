@@ -89,16 +89,36 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
-    function testInitialize_setsTheOwner() public view {
+    function testInitialize_setsExpectedValues() public view {
         assertEq(coreDepositWallet.owner(), coreDepositWalletOwner);
-    }
-
-    function testInitialize_setsTheRescuer() public view {
         assertEq(coreDepositWallet.rescuer(), coreDepositWalletRescuer);
+        assertEq(coreDepositWallet.pauser(), coreDepositWalletPauser);
     }
 
-    function testInitialize_setsThePauser() public view {
-        assertEq(coreDepositWallet.pauser(), coreDepositWalletPauser);
+    function testInitialize_emitsEvents() public {
+        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
+            address(coreDepositWalletImpl),
+            coreDepositWalletProxyAdmin,
+            bytes("")
+        );
+
+        CoreDepositWallet _coreDepositWallet = CoreDepositWallet(
+            address(_proxy)
+        );
+
+        vm.expectEmit(true, true, true, true);
+        emit OwnershipTransferred(address(0), coreDepositWalletOwner);
+
+        vm.expectEmit(true, true, true, true);
+        emit PauserChanged(coreDepositWalletPauser);
+
+        vm.expectEmit(true, true, true, true);
+        emit RescuerChanged(coreDepositWalletRescuer);
+
+        vm.expectEmit(true, true, true, true);
+        emit Initialized(1);
+
+        _coreDepositWallet.initialize(coreDepositWalletRoles);
     }
 
     function testInitialize_canBeCalledAtomicallyByTheProxy() public {
@@ -601,28 +621,5 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.expectRevert("Pausable: paused");
         coreDepositWallet.transfer(_to, _amount);
-    }
-
-    function testInitialize_emitsEvents() public {
-        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
-            address(coreDepositWalletImpl),
-            coreDepositWalletProxyAdmin,
-            bytes("")
-        );
-
-        CoreDepositWallet _coreDepositWallet = CoreDepositWallet(
-            address(_proxy)
-        );
-
-        vm.expectEmit(true, true, true, true);
-        emit OwnershipTransferred(address(0), coreDepositWalletOwner);
-
-        vm.expectEmit(true, true, true, true);
-        emit PauserChanged(coreDepositWalletPauser);
-
-        vm.expectEmit(true, true, true, true);
-        emit RescuerChanged(coreDepositWalletRescuer);
-
-        _coreDepositWallet.initialize(coreDepositWalletRoles);
     }
 }

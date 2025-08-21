@@ -968,6 +968,35 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
+    function testInitialize_emitsEvents() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(TOKEN);
+
+        address[] memory wallets = new address[](1);
+        wallets[0] = address(CORE_DEPOSIT_WALLET);
+
+        AdminUpgradableProxy _proxy = new AdminUpgradableProxy(
+            address(forwarderImpl),
+            cctpForwarderProxyAdmin,
+            bytes("")
+        );
+
+        vm.expectEmit(true, true, true, true);
+        emit OwnershipTransferred(address(0), cctpForwarderOwner);
+
+        vm.expectEmit(true, true, true, true);
+        emit RescuerChanged(cctpForwarderRescuer);
+
+        vm.expectEmit(true, true, true, true);
+        emit Initialized(1);
+
+        CctpForwarder(address(_proxy)).initialize(
+            cctpForwarderRoles,
+            tokens,
+            wallets
+        );
+    }
+
     function testInitialize_canBeCalledAtomicallyByTheProxy() public {
         address[] memory tokens = new address[](1);
         tokens[0] = address(TOKEN);
