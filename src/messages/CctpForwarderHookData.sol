@@ -24,7 +24,7 @@ import {TypedMemView} from "@memview-sol/contracts/TypedMemView.sol";
  * @notice Library for parsing CctpForwarder hook data
  *
  * @dev Hook data must follow this format:
- *      Bytes 0-23:  bytes24 - Magic bytes "cctp-relay" (optional - set to 0 to opt out of relaying)
+ *      Bytes 0-23:  bytes24 - Magic bytes "cctp-forward" (optional - set to 0 to opt out of forwarding)
  *      Bytes 24-27: uint32  - Circle Hook Data Version ID (Set to 0 for this use-case)
  *      Bytes 28-31: uint32  - Length of Circle Hook Data (Set to 20 for this use-case, byte-length of EVM address)
  *      Bytes 32-51: address - forwardRecipient address

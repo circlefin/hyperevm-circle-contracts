@@ -57,7 +57,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     uint256 constant EXPIRATION_BLOCK = 0;
     bytes constant HOOK_DATA =
         abi.encodePacked(
-            bytes24("cctp-relay"), // 24 bytes magic section
+            bytes24("cctp-forward"), // 24 bytes magic section
             uint32(0),
             uint32(20),
             FORWARD_RECIPIENT
@@ -92,7 +92,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
         }
     }
 
-    function _formatBurnMessageForRelay(
+    function _formatBurnMessageForForwarding(
         uint32 _version,
         bytes32 _burnToken,
         bytes32 _mintRecipient,
@@ -117,7 +117,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             );
     }
 
-    function _formatMessageForRelay(
+    function _formatMessageForForwarding(
         uint32 _version,
         uint32 _sourceDomain,
         uint32 _destinationDomain,
@@ -170,7 +170,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     }
 
     function test_MintAndForward_revertsIfReceiveMessageFails() public {
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -181,7 +181,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             HOOK_DATA
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -203,7 +203,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
 
     function test_MintAndForward_revertsIfInvalidBurnMessage() public {
         bytes memory burnMessage = "";
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -221,7 +221,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
         // Remove forwarding address
         forwarder.removeTokenForwardingAddress(TOKEN);
 
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -232,7 +232,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             HOOK_DATA
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -246,7 +246,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     }
 
     function test_MintAndForward_revertsIfInvalidMintRecipient() public {
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             bytes32(0), // invalid mint recipient
@@ -257,7 +257,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             HOOK_DATA
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -271,7 +271,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     }
 
     function test_MintAndForward_revertsIfAmountIsZero() public {
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -282,7 +282,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             HOOK_DATA
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -297,11 +297,11 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
 
     function test_MintAndForward_revertsIfInvalidHookDataLength() public {
         bytes memory hookWithInvalidLength = abi.encodePacked(
-            bytes24("cctp-relay"), // 24 bytes magic section
+            bytes24("cctp-forward"), // 24 bytes magic section
             uint32(0),
             uint32(20)
         );
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -312,7 +312,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             hookWithInvalidLength
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -327,12 +327,12 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
 
     function test_MintAndForward_revertsIfInvalidHookVersion() public {
         bytes memory hookWithInvalidVersion = abi.encodePacked(
-            bytes24("cctp-relay"), // 24 bytes magic section
+            bytes24("cctp-forward"), // 24 bytes magic section
             uint32(1), // invalid version
             uint32(20),
             address(forwarder)
         );
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -343,7 +343,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             hookWithInvalidVersion
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -361,7 +361,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
                 address(TOKEN_MINTER)
             );
 
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -372,7 +372,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             HOOK_DATA
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -403,12 +403,12 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
 
         for (uint256 i = 0; i < invalidRecipients.length; i++) {
             bytes memory hookWithInvalidRecipient = abi.encodePacked(
-                bytes24("cctp-relay"), // 24 bytes magic section
+                bytes24("cctp-forward"), // 24 bytes magic section
                 uint32(0),
                 uint32(20),
                 invalidRecipients[i] // invalid forward recipient
             );
-            bytes memory burnMessage = _formatBurnMessageForRelay(
+            bytes memory burnMessage = _formatBurnMessageForForwarding(
                 BURN_VERSION,
                 BURN_TOKEN,
                 MINT_RECIPIENT,
@@ -419,7 +419,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
                 EXPIRATION_BLOCK,
                 hookWithInvalidRecipient
             );
-            bytes memory message = _formatMessageForRelay(
+            bytes memory message = _formatMessageForForwarding(
                 MESSAGE_VERSION,
                 SOURCE_DOMAIN,
                 DESTINATION_DOMAIN,
@@ -434,7 +434,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     }
 
     function test_MintAndForward_revertsIfFailedToApprove() public {
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -445,7 +445,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             HOOK_DATA
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -468,7 +468,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     }
 
     function test_MintAndForward_revertsIfFailedToDeposit() public {
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -479,7 +479,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             HOOK_DATA
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -502,7 +502,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     }
 
     function test_MintAndForward_succeeds() public {
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -513,7 +513,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             HOOK_DATA
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -561,7 +561,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     }
 
     function test_MintAndForward_revertsIfUnsupportedMessageVersion() public {
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -572,7 +572,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             HOOK_DATA
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             2, // unsupported message version
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -588,7 +588,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     function test_MintAndForward_revertsIfUnsupportedBurnMessageVersion()
         public
     {
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             3, // unsupported burn message version
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -599,7 +599,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             HOOK_DATA
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -613,7 +613,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     }
 
     function test_MintAndForward_revertsIfZeroMessageVersion() public {
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -624,7 +624,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             HOOK_DATA
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             0, // zero message version
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -638,7 +638,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     }
 
     function test_MintAndForward_revertsIfZeroBurnMessageVersion() public {
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             0, // zero burn message version
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -649,7 +649,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             HOOK_DATA
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
@@ -671,7 +671,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             uint32(20),
             FORWARD_RECIPIENT
         );
-        bytes memory burnMessage = _formatBurnMessageForRelay(
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
             MINT_RECIPIENT,
@@ -682,7 +682,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             EXPIRATION_BLOCK,
             hookWithZeroMagicBytes
         );
-        bytes memory message = _formatMessageForRelay(
+        bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
             DESTINATION_DOMAIN,
