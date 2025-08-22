@@ -34,8 +34,9 @@ contract CctpExtensionTest is Test, TestUtils {
     address public tokenMessenger = address(12);
 
     function setUp() public {
-        cctpExtension = new CctpExtension(
-            CctpExtension.ConstructorParams({
+        cctpExtension = new CctpExtension();
+        cctpExtension.initialize(
+            CctpExtension.InitParams({
                 owner: owner,
                 rescuer: rescuer,
                 tokenMessenger: tokenMessenger,
@@ -46,10 +47,21 @@ contract CctpExtensionTest is Test, TestUtils {
 
     //=========================== Constructor Tests ============================
 
-    function testConstructor_revertsIfOwnerIsZeroAddress() public {
+    function testConstructor_stateVariablesAreSetCorrectly() public {
+        CctpExtension testExtension = new CctpExtension();
+        assertEq(testExtension.owner(), address(this)); // initial owner is set to the deployer
+        assertEq(testExtension.rescuer(), address(0)); // initial rescuer is set to the zero address
+        assertEq(testExtension.tokenMessenger(), address(0)); // initial tokenMessenger is set to the zero address
+        assertEq(testExtension.token(), address(0)); // initial token is set to the zero address
+    }
+
+    //=========================== Initialize Tests ============================
+
+    function testInitialize_revertsIfOwnerIsZeroAddress() public {
+        CctpExtension testExtension = new CctpExtension();
         vm.expectRevert("Invalid owner address");
-        new CctpExtension(
-            CctpExtension.ConstructorParams({
+        testExtension.initialize(
+            CctpExtension.InitParams({
                 owner: address(0),
                 rescuer: rescuer,
                 tokenMessenger: tokenMessenger,
@@ -58,10 +70,11 @@ contract CctpExtensionTest is Test, TestUtils {
         );
     }
 
-    function testConstructor_revertsIfRescuerIsZeroAddress() public {
+    function testInitialize_revertsIfRescuerIsZeroAddress() public {
+        CctpExtension testExtension = new CctpExtension();
         vm.expectRevert("Invalid rescuer address");
-        new CctpExtension(
-            CctpExtension.ConstructorParams({
+        testExtension.initialize(
+            CctpExtension.InitParams({
                 owner: owner,
                 rescuer: address(0),
                 tokenMessenger: tokenMessenger,
@@ -70,10 +83,11 @@ contract CctpExtensionTest is Test, TestUtils {
         );
     }
 
-    function testConstructor_revertsIfTokenMessengerIsZeroAddress() public {
+    function testInitialize_revertsIfTokenMessengerIsZeroAddress() public {
+        CctpExtension testExtension = new CctpExtension();
         vm.expectRevert("Invalid tokenMessenger");
-        new CctpExtension(
-            CctpExtension.ConstructorParams({
+        testExtension.initialize(
+            CctpExtension.InitParams({
                 owner: owner,
                 rescuer: rescuer,
                 tokenMessenger: address(0),
@@ -82,44 +96,37 @@ contract CctpExtensionTest is Test, TestUtils {
         );
     }
 
-    function testConstructor_revertsIfTokenIsZeroAddress() public {
+    function testInitialize_revertsIfTokenIsZeroAddress() public {
+        CctpExtension testExtension = new CctpExtension();
         vm.expectRevert("Invalid token address");
-        new CctpExtension(
-            CctpExtension.ConstructorParams({
-                owner: owner,
-                rescuer: rescuer,
-                tokenMessenger: tokenMessenger,
-                token: address(0)
-            })
+        testExtension.initialize(
+            CctpExtension.InitParams({owner: owner, rescuer: rescuer, tokenMessenger: tokenMessenger, token: address(0)})
         );
     }
 
-    function testConstructor_setsStateVariablesCorrectly() public view {
+    function testInitialize_setsStateVariablesCorrectly() public view {
         assertEq(cctpExtension.owner(), owner);
         assertEq(cctpExtension.rescuer(), rescuer);
-        assertEq(cctpExtension.TOKEN_MESSENGER(), tokenMessenger);
-        assertEq(cctpExtension.TOKEN(), address(EIP3009_TOKEN));
+        assertEq(cctpExtension.tokenMessenger(), tokenMessenger);
+        assertEq(cctpExtension.token(), address(EIP3009_TOKEN));
     }
 
-    function testConstructor_increasesAllowanceForTokenMessenger() public view {
+    function testInitialize_increasesAllowanceForTokenMessenger() public view {
         assertEq(EIP3009_TOKEN.allowance(address(cctpExtension), tokenMessenger), type(uint256).max);
     }
 
-    function testConstructor_emitsOwnershipTransferredEvents() public {
-        // The constructor emits two OwnershipTransferred events in sequence:
-        // 1. Initial ownership to deployer (msg.sender = this test contract)
-        // 2. Transfer ownership to specified owner
+    function testInitialize_emitsOwnershipTransferredEvents() public {
+        // The initialize function emits one OwnershipTransferred event:
+        // Transfer from test contract (initial owner) to specified owner
 
-        // Expect first event: address(0) -> address(this)
-        vm.expectEmit(true, true, true, true);
-        emit OwnershipTransferred(address(0), address(this));
+        CctpExtension testExtension = new CctpExtension();
 
-        // Expect second event: address(this) -> owner
+        // Expect event: address(this) -> owner (transfer from initial owner)
         vm.expectEmit(true, true, true, true);
         emit OwnershipTransferred(address(this), owner);
 
-        new CctpExtension(
-            CctpExtension.ConstructorParams({
+        testExtension.initialize(
+            CctpExtension.InitParams({
                 owner: owner,
                 rescuer: rescuer,
                 tokenMessenger: tokenMessenger,
@@ -128,11 +135,54 @@ contract CctpExtensionTest is Test, TestUtils {
         );
     }
 
-    function testConstructor_emitsRescuerChangedEvent() public {
+    function testInitialize_emitsRescuerChangedEvent() public {
+        CctpExtension testExtension = new CctpExtension();
         vm.expectEmit(true, true, true, true);
         emit RescuerChanged(rescuer);
-        new CctpExtension(
-            CctpExtension.ConstructorParams({
+        testExtension.initialize(
+            CctpExtension.InitParams({
+                owner: owner,
+                rescuer: rescuer,
+                tokenMessenger: tokenMessenger,
+                token: address(EIP3009_TOKEN)
+            })
+        );
+    }
+
+    function testInitialize_emitsInitializedEvent() public {
+        CctpExtension testExtension = new CctpExtension();
+
+        // Expect Initialized event with version 1
+        vm.expectEmit(true, true, true, true);
+        emit Initialized(1);
+
+        testExtension.initialize(
+            CctpExtension.InitParams({
+                owner: owner,
+                rescuer: rescuer,
+                tokenMessenger: tokenMessenger,
+                token: address(EIP3009_TOKEN)
+            })
+        );
+    }
+
+    function testInitialize_revertsIfCalledTwice() public {
+        CctpExtension testExtension = new CctpExtension();
+
+        // First initialization should succeed
+        testExtension.initialize(
+            CctpExtension.InitParams({
+                owner: owner,
+                rescuer: rescuer,
+                tokenMessenger: tokenMessenger,
+                token: address(EIP3009_TOKEN)
+            })
+        );
+
+        // Second initialization should fail
+        vm.expectRevert("Initializable: invalid initialization");
+        testExtension.initialize(
+            CctpExtension.InitParams({
                 owner: owner,
                 rescuer: rescuer,
                 tokenMessenger: tokenMessenger,

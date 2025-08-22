@@ -36,27 +36,45 @@ contract DeployCctpExtensionScript is Script {
     function deployCctpExtension() private {
         Create2Factory factory = Create2Factory(factoryAddress);
 
+        // Construct initialization call data
+        bytes memory initializeData = abi.encodeWithSelector(
+            CctpExtension.initialize.selector,
+            CctpExtension.InitParams({
+                owner: owner,
+                rescuer: rescuer,
+                tokenMessenger: tokenMessenger,
+                token: token
+            })
+        );
+
+        // Create multicall data array with initialization
+        bytes[] memory multiCallData = new bytes[](1);
+        multiCallData[0] = initializeData;
+
         // Start recording transactions
         vm.startBroadcast(factory.owner());
 
-        // Deploy CctpExtension
+        // Deploy and initialize CctpExtension atomically
         cctpExtension = CctpExtension(
-            factory.deploy(
+            factory.deployAndMultiCall(
                 0,
                 SALT_CCTP_EXTENSION,
-                abi.encodePacked(
-                    type(CctpExtension).creationCode,
-                    abi.encode(
-                        CctpExtension.ConstructorParams({
-                            owner: owner,
-                            rescuer: rescuer,
-                            tokenMessenger: tokenMessenger,
-                            token: token
-                        })
-                    )
-                )
+                type(CctpExtension).creationCode,
+                multiCallData
             )
         );
+
+        // Verify initialization was successful
+        require(cctpExtension.owner() == owner, "Owner not set correctly");
+        require(
+            cctpExtension.rescuer() == rescuer,
+            "Rescuer not set correctly"
+        );
+        require(
+            cctpExtension.tokenMessenger() == tokenMessenger,
+            "TokenMessenger not set correctly"
+        );
+        require(cctpExtension.token() == token, "Token not set correctly");
 
         // Stop recording transactions
         vm.stopBroadcast();

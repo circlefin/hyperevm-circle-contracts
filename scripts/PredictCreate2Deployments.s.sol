@@ -102,29 +102,11 @@ contract PredictCreate2Deployments is Script {
     }
 
     // =========================== CctpExtension ============================
-    function cctpExtension(
-        address create2Factory,
-        address owner,
-        address rescuer,
-        address tokenMessenger,
-        address token
-    ) public returns (address) {
+    function cctpExtension(address create2Factory) public returns (address) {
         return
             vm.computeCreate2Address(
                 SALT_CCTP_EXTENSION,
-                keccak256(
-                    abi.encodePacked(
-                        type(CctpExtension).creationCode,
-                        abi.encode(
-                            CctpExtension.ConstructorParams({
-                                owner: owner,
-                                rescuer: rescuer,
-                                tokenMessenger: tokenMessenger,
-                                token: token
-                            })
-                        )
-                    )
-                ),
+                keccak256(abi.encodePacked(type(CctpExtension).creationCode)),
                 create2Factory
             );
     }

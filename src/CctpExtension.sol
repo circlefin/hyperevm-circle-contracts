@@ -23,6 +23,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import {SafeMath} from "@openzeppelin/contracts/math/SafeMath.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Rescuable} from "./roles/Rescuable.sol";
+import {Initializable} from "@evm-cctp-contracts/proxy/Initializable.sol";
 import {IEIP3009Token} from "./interfaces/IEIP3009Token.sol";
 import {TokenMessengerV2} from "@evm-cctp-contracts/v2/TokenMessengerV2.sol";
 
@@ -32,20 +33,20 @@ import {TokenMessengerV2} from "@evm-cctp-contracts/v2/TokenMessengerV2.sol";
  *         combined with CCTP's deposit-for-burn mechanism. Implements batching
  *         to optimize gas costs for multiple burn operations.
  */
-contract CctpExtension is ICctpExtension, Rescuable {
+contract CctpExtension is ICctpExtension, Rescuable, Initializable {
     using SafeERC20 for IERC20;
     using SafeMath for uint256;
 
     //=========================== Structs ============================
 
     /**
-     * @notice Constructor parameters for CctpExtension contract
+     * @notice Initialization parameters for CctpExtension contract
      * @param owner The owner address
      * @param rescuer The rescuer address
      * @param tokenMessenger The CCTP TokenMessenger contract address
      * @param token The token contract address
      */
-    struct ConstructorParams {
+    struct InitParams {
         address owner;
         address rescuer;
         address tokenMessenger;
@@ -55,18 +56,18 @@ contract CctpExtension is ICctpExtension, Rescuable {
     //=========================== State Variables ============================
 
     /// @notice The CCTP TokenMessenger contract address
-    address public immutable TOKEN_MESSENGER;
+    address public tokenMessenger;
 
     /// @notice The token contract address
-    address public immutable TOKEN;
+    address public token;
 
-    //=========================== Constructor ============================
+    //=========================== Initializer ============================
 
     /**
      * @notice Initializes the CctpExtension contract
-     * @param params The constructor parameters struct
+     * @param params The initialization parameters struct
      */
-    constructor(ConstructorParams memory params) {
+    function initialize(InitParams calldata params) external initializer {
         require(params.owner != address(0), "Invalid owner address");
         require(params.rescuer != address(0), "Invalid rescuer address");
         require(params.tokenMessenger != address(0), "Invalid tokenMessenger");
@@ -74,8 +75,9 @@ contract CctpExtension is ICctpExtension, Rescuable {
 
         _transferOwnership(params.owner);
         _updateRescuer(params.rescuer);
-        TOKEN_MESSENGER = params.tokenMessenger;
-        TOKEN = params.token;
+        tokenMessenger = params.tokenMessenger;
+        token = params.token;
+
         IERC20(params.token).safeIncreaseAllowance(params.tokenMessenger, type(uint256).max);
     }
 
@@ -87,7 +89,7 @@ contract CctpExtension is ICctpExtension, Rescuable {
         DepositForBurnWithHookData calldata _depositForBurnData
     ) external override {
         // 1. Pull the total amount from the ERC-3009 authorization
-        IEIP3009Token(TOKEN).receiveWithAuthorization(
+        IEIP3009Token(token).receiveWithAuthorization(
             msg.sender,
             address(this),
             _receiveWithAuthorizationData.amount,
@@ -108,11 +110,11 @@ contract CctpExtension is ICctpExtension, Rescuable {
             // Execute batched burns with hook data
             while (remaining > 0) {
                 uint256 batchAmount = remaining > batchSize ? batchSize : remaining;
-                TokenMessengerV2(TOKEN_MESSENGER).depositForBurnWithHook(
+                TokenMessengerV2(tokenMessenger).depositForBurnWithHook(
                     batchAmount,
                     _depositForBurnData.destinationDomain,
                     _depositForBurnData.mintRecipient,
-                    TOKEN,
+                    token,
                     _depositForBurnData.destinationCaller,
                     _depositForBurnData.maxFee,
                     _depositForBurnData.minFinalityThreshold,
@@ -124,11 +126,11 @@ contract CctpExtension is ICctpExtension, Rescuable {
             // Execute batched burns without hook data
             while (remaining > 0) {
                 uint256 batchAmount = remaining > batchSize ? batchSize : remaining;
-                TokenMessengerV2(TOKEN_MESSENGER).depositForBurn(
+                TokenMessengerV2(tokenMessenger).depositForBurn(
                     batchAmount,
                     _depositForBurnData.destinationDomain,
                     _depositForBurnData.mintRecipient,
-                    TOKEN,
+                    token,
                     _depositForBurnData.destinationCaller,
                     _depositForBurnData.maxFee,
                     _depositForBurnData.minFinalityThreshold

@@ -21,4 +21,4 @@ pragma solidity 0.7.6;
 
 bytes32 constant SALT_CORE_DEPOSIT_WALLET = keccak256("hcc.coredepositwallet");
 bytes32 constant SALT_CCTP_FORWARDER = keccak256("cctp.v2.cctpforwarder");
-bytes32 constant SALT_CCTP_EXTENSION = keccak256("cctp.v2.cctpextension");
+bytes32 constant SALT_CCTP_EXTENSION = keccak256("cctp.v2.cctpextension.usdc");

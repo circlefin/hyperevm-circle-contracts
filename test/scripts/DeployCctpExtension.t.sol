@@ -33,10 +33,10 @@ contract DeployCctpExtensionTest is DeployScriptTestUtils {
         public
     {
         // check token messenger
-        assertEq(address(cctpExtension.TOKEN_MESSENGER()), TOKEN_MESSENGER);
+        assertEq(address(cctpExtension.tokenMessenger()), TOKEN_MESSENGER);
 
         // check token
-        assertEq(address(cctpExtension.TOKEN()), TOKEN);
+        assertEq(address(cctpExtension.token()), TOKEN);
 
         // check owner
         assertEq(cctpExtension.owner(), cctpExtensionOwner);
@@ -44,16 +44,10 @@ contract DeployCctpExtensionTest is DeployScriptTestUtils {
         // check rescuer
         assertEq(cctpExtension.rescuer(), cctpExtensionRescuer);
 
-        // Verify matches with predicted
+        // Verify matches with predicted address
         PredictCreate2Deployments predictCreate2Deployments = new PredictCreate2Deployments();
         address predictedCctpExtension = predictCreate2Deployments
-            .cctpExtension(
-                address(create2Factory),
-                cctpExtensionOwner,
-                cctpExtensionRescuer,
-                TOKEN_MESSENGER,
-                TOKEN
-            );
+            .cctpExtension(address(create2Factory));
         assertEq(address(cctpExtension), predictedCctpExtension);
     }
 }
