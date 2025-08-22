@@ -77,8 +77,8 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     using AddressUtils for address;
 
     function setUp() public {
-        _deployImplementations();
-        _deployProxies();
+        _deployCreate2Factory();
+        _deployCctpForwarder();
 
         BURN_TOKEN = TOKEN.toBytes32();
         MINT_RECIPIENT = address(forwarder).toBytes32();

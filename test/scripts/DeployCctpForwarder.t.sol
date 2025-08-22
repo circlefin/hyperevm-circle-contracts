@@ -18,20 +18,64 @@
 pragma solidity 0.7.6;
 pragma abicoder v2;
 
-import {DeployScriptTestUtils} from "../DeployScriptTestUtils.s.sol";
 import {AdminUpgradableProxy} from "@evm-cctp-contracts/proxy/AdminUpgradableProxy.sol";
+import {DeployScriptTestUtils} from "../DeployScriptTestUtils.s.sol";
+import {CctpForwarder} from "../../src/CctpForwarder.sol";
 import {MockMintBurnToken} from "lib/evm-cctp-contracts/test/mocks/MockMintBurnToken.sol";
 import {MockMessageTransmitterV2, MockTokenMessengerV2, MockTokenMinterV2, MockStatefulTokenMessengerV2} from "../mocks/MockCctpContracts.sol";
-import {CoreDepositWallet} from "../../src/CoreDepositWallet.sol";
-import {CctpForwarder} from "../../src/CctpForwarder.sol";
+import {PredictCreate2Deployments} from "../../scripts/PredictCreate2Deployments.s.sol";
 
-contract DeployProxiesTest is DeployScriptTestUtils {
+contract DeployCctpForwarderTest is DeployScriptTestUtils {
     function setUp() public {
-        _deployImplementations();
-        _deployProxies();
+        _deployCreate2Factory();
+        _deployCctpForwarder();
     }
 
-    function test_DeployProxies_deploysCctpForwarderSuccessfully(
+    function test_DeployImplementations_deploysCctpForwarderImplementationSuccessfully()
+        public
+    {
+        // check message transmitter
+        assertEq(
+            address(forwarderImpl.messageTransmitter()),
+            MESSAGE_TRANSMITTER
+        );
+
+        // check supported message version
+        assertEq(
+            forwarderImpl.supportedMessageVersion(),
+            uint256(MESSAGE_VERSION)
+        );
+
+        // check supported burn message version
+        assertEq(
+            forwarderImpl.supportedBurnMessageVersion(),
+            uint256(BURN_VERSION)
+        );
+
+        // verify initializers are disabled
+        vm.expectRevert("Initializable: invalid initialization");
+        forwarderImpl.initialize(
+            CctpForwarder.CctpForwarderRoles({
+                owner: cctpForwarderOwner,
+                rescuer: cctpForwarderRescuer
+            }),
+            new address[](0),
+            new address[](0)
+        );
+
+        // Verify matches with predicted
+        PredictCreate2Deployments predictCreate2Deployments = new PredictCreate2Deployments();
+        address predictedCctpForwarderImpl = predictCreate2Deployments
+            .cctpForwarderImpl(
+                address(create2Factory),
+                MESSAGE_TRANSMITTER,
+                MESSAGE_VERSION,
+                BURN_VERSION
+            );
+        assertEq(address(forwarderImpl), predictedCctpForwarderImpl);
+    }
+
+    function test_DeployProxies_deploysCctpForwarderProxySuccessfully(
         address otherToken
     ) public {
         // Assume otherToken is not TOKEN
@@ -47,8 +91,7 @@ contract DeployProxiesTest is DeployScriptTestUtils {
         assertEq(forwarderProxy.admin(), address(cctpForwarderProxyAdmin));
 
         // check cctp forwarder owner
-        // assertEq(forwarder.owner(), cctpForwarderOwner);
-        // TODO
+        assertEq(forwarder.owner(), cctpForwarderOwner);
 
         // check cctp forwarder tokens and forwarding addresses
         assertEq(
@@ -67,41 +110,11 @@ contract DeployProxiesTest is DeployScriptTestUtils {
             new address[](0),
             new address[](0)
         );
-    }
 
-    function test_DeployProxies_deploysCoreDepositWalletSuccessfully() public {
-        // check core deposit wallet implementation
-        AdminUpgradableProxy coreDepositWalletProxy = AdminUpgradableProxy(
-            payable(address(coreDepositWallet))
-        );
-        assertEq(
-            coreDepositWalletProxy.implementation(),
-            address(coreDepositWalletImpl)
-        );
-
-        // check core deposit wallet proxy admin
-        assertEq(
-            coreDepositWalletProxy.admin(),
-            address(coreDepositWalletProxyAdmin)
-        );
-
-        // check core deposit wallet owner
-        assertEq(coreDepositWallet.owner(), coreDepositWalletOwner);
-
-        // check core deposit wallet pauser
-        assertEq(coreDepositWallet.pauser(), coreDepositWalletPauser);
-
-        // check core deposit wallet rescuer
-        assertEq(coreDepositWallet.rescuer(), coreDepositWalletRescuer);
-
-        // verify initializers are disabled
-        vm.expectRevert("Initializable: invalid initialization");
-        coreDepositWallet.initialize(
-            CoreDepositWallet.CoreDepositWalletRoles({
-                owner: coreDepositWalletOwner,
-                pauser: coreDepositWalletPauser,
-                rescuer: coreDepositWalletRescuer
-            })
-        );
+        // Verify matches with predicted
+        PredictCreate2Deployments predictCreate2Deployments = new PredictCreate2Deployments();
+        address predictedCctpForwarder = predictCreate2Deployments
+            .cctpForwarderProxy(address(create2Factory));
+        assertEq(address(forwarder), predictedCctpForwarder);
     }
 }

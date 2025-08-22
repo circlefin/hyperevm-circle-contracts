@@ -35,8 +35,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     address public newTokenSystemAddress = address(11);
 
     function setUp() public {
-        _deployImplementations();
-        _deployProxies();
+        _deployCreate2Factory();
+        _deployCoreDepositWallet();
     }
 
     // Proxy tests
@@ -300,9 +300,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Check the balance of the CoreDepositWallet
         assertEq(
-            MockDepositableToken(TOKEN).balanceOf(
-                address(coreDepositWallet)
-            ),
+            MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
             _amount
         );
     }
@@ -325,9 +323,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         coreDepositWallet.deposit(_amount);
     }
 
-    function testDeposit_revertsWhenPaused(
-        uint256 _amount
-    ) public {
+    function testDeposit_revertsWhenPaused(uint256 _amount) public {
         vm.assume(_amount > 0);
 
         vm.prank(coreDepositWalletPauser);
@@ -374,9 +370,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Check the balance of the CoreDepositWallet
         assertEq(
-            MockDepositableToken(TOKEN).balanceOf(
-                address(coreDepositWallet)
-            ),
+            MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
             _amount
         );
     }
@@ -504,18 +498,27 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Deposit tokens into the CoreDepositWallet
         vm.prank(_sender);
-        coreDepositWallet.depositWithAuth(_amount, 0, 1, bytes32("nonce"), 0, bytes32("s"), bytes32("v"));
+        coreDepositWallet.depositWithAuth(
+            _amount,
+            0,
+            1,
+            bytes32("nonce"),
+            0,
+            bytes32("s"),
+            bytes32("v")
+        );
 
         // Check the balance of the CoreDepositWallet
         assertEq(
-            MockDepositableToken(TOKEN).balanceOf(
-                address(coreDepositWallet)
-            ),
+            MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
             _amount
         );
     }
 
-    function testDepositWithAuth_revertsWhenPaused(uint256 _amount, address _sender) public {
+    function testDepositWithAuth_revertsWhenPaused(
+        uint256 _amount,
+        address _sender
+    ) public {
         vm.assume(_amount > 0);
         vm.assume(_sender != address(0));
 
@@ -525,7 +528,15 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.expectRevert("Pausable: paused");
         vm.prank(_sender);
-        coreDepositWallet.depositWithAuth(_amount, 0, 1, bytes32("nonce"), 0, bytes32("s"), bytes32("v"));
+        coreDepositWallet.depositWithAuth(
+            _amount,
+            0,
+            1,
+            bytes32("nonce"),
+            0,
+            bytes32("s"),
+            bytes32("v")
+        );
     }
 
     function testDepositWithAuth_revertsWithZeroAmount(address _sender) public {
@@ -533,22 +544,43 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.expectRevert("Amount must be greater than zero");
         vm.prank(_sender);
-        coreDepositWallet.depositWithAuth(0, 0, 1, bytes32("nonce"), 0, bytes32("s"), bytes32("v"));
+        coreDepositWallet.depositWithAuth(
+            0,
+            0,
+            1,
+            bytes32("nonce"),
+            0,
+            bytes32("s"),
+            bytes32("v")
+        );
     }
 
-    function testDepositWithAuth_revertsWhenReceiveFails(uint256 _amount, address _sender) public {
+    function testDepositWithAuth_revertsWhenReceiveFails(
+        uint256 _amount,
+        address _sender
+    ) public {
         vm.assume(_amount > 0);
         vm.assume(_sender != address(0));
 
         vm.mockCallRevert(
             address(TOKEN),
-            abi.encodeWithSelector(MockEIP3009Token.receiveWithAuthorization.selector),
+            abi.encodeWithSelector(
+                MockEIP3009Token.receiveWithAuthorization.selector
+            ),
             abi.encode("revert")
         );
 
         vm.expectRevert();
         vm.prank(_sender);
-        coreDepositWallet.depositWithAuth(_amount, 0, 1, bytes32("nonce"), 0, bytes32("s"), bytes32("v"));
+        coreDepositWallet.depositWithAuth(
+            _amount,
+            0,
+            1,
+            bytes32("nonce"),
+            0,
+            bytes32("s"),
+            bytes32("v")
+        );
     }
 
     function testTransfer_succeeds(address _to, uint256 _amount) public {
@@ -557,10 +589,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_amount > 0);
 
         // Mint tokens to the CoreDepositWallet
-        MockDepositableToken(TOKEN).mint(
-            address(coreDepositWallet),
-            _amount
-        );
+        MockDepositableToken(TOKEN).mint(address(coreDepositWallet), _amount);
 
         // Check that the Withdraw event was emitted
         vm.expectEmit(true, true, true, true);

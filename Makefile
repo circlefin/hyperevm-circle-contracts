@@ -16,14 +16,20 @@ anvil:
 clean:
 	@${FOUNDRY} "forge clean"
 
-simulate-deploy-implementations:
-	forge script scripts/DeployImplementations.s.sol:DeployImplementationsScript --rpc-url ${RPC_URL} --sender ${SENDER}
+simulate-deploy-core-deposit-wallet:
+	forge script scripts/DeployCoreDepositWallet.s.sol:DeployCoreDepositWalletScript --rpc-url ${RPC_URL} --sender ${SENDER}
 
-deploy-implementations:
-	forge script scripts/DeployImplementations.s.sol:DeployImplementationsScript --rpc-url ${RPC_URL} --sender ${SENDER} --broadcast
+deploy-core-deposit-wallet:
+	forge script scripts/DeployCoreDepositWallet.s.sol:DeployCoreDepositWalletScript --rpc-url ${RPC_URL} --private-key ${CREATE2_FACTORY_OWNER_KEY} --broadcast
 
-simulate-deploy-proxies:
-	forge script scripts/DeployProxies.s.sol:DeployProxiesScript --rpc-url ${RPC_URL} --sender ${SENDER}
+simulate-deploy-cctp-forwarder:
+	forge script scripts/DeployCctpForwarder.s.sol:DeployCctpForwarderScript --rpc-url ${RPC_URL} --sender ${SENDER}
 
-deploy-proxies:
-	forge script scripts/DeployProxies.s.sol:DeployProxiesScript --rpc-url ${RPC_URL} --sender ${SENDER} --broadcast
+deploy-cctp-forwarder:
+	forge script scripts/DeployCctpForwarder.s.sol:DeployCctpForwarderScript --rpc-url ${RPC_URL} --private-key ${CREATE2_FACTORY_OWNER_KEY} --broadcast
+
+simulate-deploy-cctp-extension:
+	forge script scripts/DeployCctpExtension.s.sol:DeployCctpExtensionScript --rpc-url ${RPC_URL} --sender ${SENDER}
+
+deploy-cctp-extension:
+	forge script scripts/DeployCctpExtension.s.sol:DeployCctpExtensionScript --rpc-url ${RPC_URL} --private-key ${CREATE2_FACTORY_OWNER_KEY} --broadcast

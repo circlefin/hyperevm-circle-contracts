@@ -19,19 +19,37 @@ pragma solidity 0.7.6;
 pragma abicoder v2;
 
 import {Test} from "forge-std/Test.sol";
-import {DeployImplementationsScript} from "../scripts/DeployImplementations.s.sol";
-import {DeployProxiesScript} from "../scripts/DeployProxies.s.sol";
+import {Create2Factory} from "@evm-cctp-contracts/v2/Create2Factory.sol";
 import {CoreDepositWallet} from "../src/CoreDepositWallet.sol";
 import {CctpForwarder} from "../src/CctpForwarder.sol";
+import {CctpExtension} from "../src/CctpExtension.sol";
 import {MockDepositableToken} from "./mocks/MockDepositableToken.sol";
 import {MockMessageTransmitterV2, MockTokenMinterV2, MockTokenMessengerV2} from "./mocks/MockCctpContracts.sol";
 import {MockCoreDepositWallet} from "./mocks/MockCoreDepositWallet.sol";
+import {DeployCoreDepositWalletScript} from "../scripts/DeployCoreDepositWallet.s.sol";
+import {DeployCctpForwarderScript} from "../scripts/DeployCctpForwarder.s.sol";
+import {DeployCctpExtensionScript} from "../scripts/DeployCctpExtension.s.sol";
+import {PredictCreate2Deployments} from "../scripts/PredictCreate2Deployments.s.sol";
 
 contract DeployScriptTestUtils is Test {
-    // CoreDepositWallet test constants
+    uint256 deployerPK;
+    address deployer;
+    Create2Factory create2Factory;
+
+    // =========================== Deployed Contracts ============================
+    CoreDepositWallet public coreDepositWallet;
+    CctpForwarder public forwarder;
+    CctpExtension public cctpExtension;
+
+    // =========================== Implementations ============================
+    CoreDepositWallet public coreDepositWalletImpl;
+    CctpForwarder public forwarderImpl;
+
+    // =========================== Test Constants ============================
+    // CoreDepositWallet
     address public TOKEN_SYSTEM_ADDRESS = address(0x1111);
 
-    // CctpForwarder test constants
+    // CctpForwarder
     uint32 public MESSAGE_VERSION = 1;
     uint32 public BURN_VERSION = 2; // Set to 2 to differentiate from MESSAGE_VERSION
 
@@ -45,10 +63,8 @@ contract DeployScriptTestUtils is Test {
     MockCoreDepositWallet public CORE_DEPOSIT_WALLET =
         new MockCoreDepositWallet();
 
-    CoreDepositWallet public coreDepositWallet;
-    CctpForwarder public forwarder;
-
-    // Roles
+    // =========================== Roles ============================
+    // CoreDepositWallet
     address public coreDepositWalletProxyAdmin = address(0x2222);
     address public coreDepositWalletOwner = address(0x3333);
     address public coreDepositWalletPauser = address(0x4444);
@@ -59,6 +75,8 @@ contract DeployScriptTestUtils is Test {
             pauser: coreDepositWalletPauser,
             rescuer: coreDepositWalletRescuer
         });
+
+    // CctpForwarder
     address public cctpForwarderOwner = address(0x6666);
     address public cctpForwarderProxyAdmin = address(0x7777);
     address public cctpForwarderRescuer = address(0x8888);
@@ -68,51 +86,26 @@ contract DeployScriptTestUtils is Test {
             rescuer: cctpForwarderRescuer
         });
 
-    // Implementations
-    CoreDepositWallet public coreDepositWalletImpl;
-    CctpForwarder public forwarderImpl;
+    // CctpExtension
+    address public cctpExtensionOwner = address(0x9999);
+    address public cctpExtensionRescuer = address(0xaaaa);
 
-    function _deployImplementations() internal {
-        // Set env vars
-        vm.setEnv(
-            "IMPLEMENTATION_DEPLOYER_KEY",
-            vm.toString(keccak256("IMPLEMENTATION_DEPLOYER_KEY"))
-        );
-        vm.setEnv(
-            "MESSAGE_TRANSMITTER_ADDRESS",
-            vm.toString(MESSAGE_TRANSMITTER)
-        );
-        vm.setEnv(
-            "SUPPORTED_MESSAGE_VERSION",
-            vm.toString(uint256(MESSAGE_VERSION))
-        );
-        vm.setEnv(
-            "SUPPORTED_BURN_MESSAGE_VERSION",
-            vm.toString(uint256(BURN_VERSION))
-        );
-
-        vm.setEnv("TOKEN_CONTRACT_ADDRESS", vm.toString(TOKEN));
-        vm.setEnv("TOKEN_SYSTEM_ADDRESS", vm.toString(TOKEN_SYSTEM_ADDRESS));
-
-        // Deploy
-        DeployImplementationsScript deployImplementationsScript = new DeployImplementationsScript();
-        deployImplementationsScript.setUp();
-        deployImplementationsScript.run();
-        coreDepositWalletImpl = deployImplementationsScript
-            .coreDepositWalletImpl();
-        forwarderImpl = deployImplementationsScript.cctpForwarderImpl();
+    function _deployCreate2Factory() internal {
+        deployerPK = uint256(keccak256("DEPLOYTEST_DEPLOYER_PK"));
+        deployer = vm.addr(deployerPK);
+        vm.startBroadcast(deployerPK);
+        create2Factory = new Create2Factory();
+        vm.stopBroadcast();
     }
 
-    function _deployProxies() internal {
+    function _deployCoreDepositWallet() internal {
         // Set env vars
         vm.setEnv(
-            "PROXY_DEPLOYER_KEY",
-            vm.toString(keccak256("PROXY_DEPLOYER_KEY"))
+            "CREATE2_FACTORY_CONTRACT_ADDRESS",
+            vm.toString(address(create2Factory))
         );
-        vm.setEnv(
-            "CORE_DEPOSIT_WALLET_IMPLEMENTATION_ADDRESS",
-            vm.toString(address(coreDepositWalletImpl))
-        );
+        vm.setEnv("TOKEN_CONTRACT_ADDRESS", vm.toString(TOKEN));
+        vm.setEnv("TOKEN_SYSTEM_ADDRESS", vm.toString(TOKEN_SYSTEM_ADDRESS));
         vm.setEnv(
             "CORE_DEPOSIT_WALLET_PROXY_ADMIN_ADDRESS",
             vm.toString(coreDepositWalletProxyAdmin)
@@ -129,9 +122,33 @@ contract DeployScriptTestUtils is Test {
             "CORE_DEPOSIT_WALLET_RESCUER_ADDRESS",
             vm.toString(coreDepositWalletRescuer)
         );
+
+        // Deploy
+        DeployCoreDepositWalletScript deployCoreDepositWalletScript = new DeployCoreDepositWalletScript();
+        deployCoreDepositWalletScript.setUp();
+        deployCoreDepositWalletScript.run();
+        coreDepositWalletImpl = deployCoreDepositWalletScript
+            .coreDepositWalletImpl();
+        coreDepositWallet = deployCoreDepositWalletScript.coreDepositWallet();
+    }
+
+    function _deployCctpForwarder() internal {
+        // Set env vars
         vm.setEnv(
-            "CCTP_FORWARDER_IMPLEMENTATION_ADDRESS",
-            vm.toString(address(forwarderImpl))
+            "CREATE2_FACTORY_CONTRACT_ADDRESS",
+            vm.toString(address(create2Factory))
+        );
+        vm.setEnv(
+            "MESSAGE_TRANSMITTER_ADDRESS",
+            vm.toString(MESSAGE_TRANSMITTER)
+        );
+        vm.setEnv(
+            "SUPPORTED_MESSAGE_VERSION",
+            vm.toString(uint256(MESSAGE_VERSION))
+        );
+        vm.setEnv(
+            "SUPPORTED_BURN_MESSAGE_VERSION",
+            vm.toString(uint256(BURN_VERSION))
         );
         vm.setEnv(
             "CCTP_FORWARDER_PROXY_ADMIN_ADDRESS",
@@ -145,17 +162,41 @@ contract DeployScriptTestUtils is Test {
             "CCTP_FORWARDER_RESCUER_ADDRESS",
             vm.toString(cctpForwarderRescuer)
         );
-        vm.setEnv("CCTP_FORWARDER_TOKEN_ADDRESS", vm.toString(TOKEN));
+        vm.setEnv("CCTP_FORWARDER_TOKEN_ADDRESSES", vm.toString(TOKEN));
         vm.setEnv(
-            "CCTP_FORWARDER_FORWARDING_ADDRESS",
+            "CCTP_FORWARDER_FORWARDING_ADDRESSES",
             vm.toString(address(CORE_DEPOSIT_WALLET))
         );
 
         // Deploy
-        DeployProxiesScript deployProxiesScript = new DeployProxiesScript();
-        deployProxiesScript.setUp();
-        deployProxiesScript.run();
-        coreDepositWallet = deployProxiesScript.coreDepositWallet();
-        forwarder = deployProxiesScript.cctpForwarder();
+        DeployCctpForwarderScript deployCctpForwarderScript = new DeployCctpForwarderScript();
+        deployCctpForwarderScript.setUp();
+        deployCctpForwarderScript.run();
+        forwarderImpl = deployCctpForwarderScript.cctpForwarderImpl();
+        forwarder = deployCctpForwarderScript.cctpForwarder();
+    }
+
+    function _deployCctpExtension() internal {
+        // Set env vars
+        vm.setEnv(
+            "CREATE2_FACTORY_CONTRACT_ADDRESS",
+            vm.toString(address(create2Factory))
+        );
+        vm.setEnv(
+            "CCTP_EXTENSION_OWNER_ADDRESS",
+            vm.toString(cctpExtensionOwner)
+        );
+        vm.setEnv(
+            "CCTP_EXTENSION_RESCUER_ADDRESS",
+            vm.toString(cctpExtensionRescuer)
+        );
+        vm.setEnv("TOKEN_MESSENGER_ADDRESS", vm.toString(TOKEN_MESSENGER));
+        vm.setEnv("TOKEN_CONTRACT_ADDRESS", vm.toString(TOKEN));
+
+        // Deploy
+        DeployCctpExtensionScript deployCctpExtensionScript = new DeployCctpExtensionScript();
+        deployCctpExtensionScript.setUp();
+        deployCctpExtensionScript.run();
+        cctpExtension = deployCctpExtensionScript.cctpExtension();
     }
 }
