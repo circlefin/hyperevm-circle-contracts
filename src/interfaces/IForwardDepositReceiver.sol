@@ -24,12 +24,10 @@ pragma solidity 0.7.6;
 interface IForwardDepositReceiver {
     /**
      * @notice Deposit tokens for a recipient
-     * @param sender Sender of the deposit
      * @param recipient Recipient of the deposit
      * @param amount Amount of tokens to deposit
      */
     function depositFor(
-        address sender,
         address recipient,
         uint256 amount
     ) external;

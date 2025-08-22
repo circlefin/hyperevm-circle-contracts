@@ -25,7 +25,6 @@ contract MockCoreDepositWallet is ICoreDepositWallet {
     function deposit(uint256 amount) external override {}
 
     function depositFor(
-        address sender,
         address recipient,
         uint256 amount
     ) external override {}

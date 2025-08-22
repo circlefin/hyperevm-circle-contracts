@@ -191,7 +191,6 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
 
         // Deposit to forwarding address
         IForwardDepositReceiver(forwardingAddress).depositFor(
-            address(this),
             forwardRecipient,
             amountMinted
         );

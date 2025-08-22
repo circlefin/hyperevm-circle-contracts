@@ -100,17 +100,16 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     }
 
     /**
-     * @notice Deposits tokens from sender to CoreDepositWallet on HyperEVM and credits recipient on Hypercore.
-     * @param sender The address sending the tokens on HyperEVM.
+     * @notice Deposits tokens to credit a specific recipient on Hypercore.
      * @param recipient The address receiving the tokens on HyperCore.
      * @param amount The amount of tokens being deposited.
      */
-    function depositFor(address sender, address recipient, uint256 amount) external override whenNotPaused {
+    function depositFor(address recipient, uint256 amount) external override whenNotPaused {
         require(recipient != address(0), "Invalid recipient: zero address");
         require(recipient != tokenSystemAddress, "Invalid recipient: system address");
         require(recipient != address(this), "Invalid recipient: CoreDepositWallet");
         require(!token.isBlacklisted(recipient), "Invalid recipient: blacklisted");
-        _deposit(sender, recipient, amount);
+        _deposit(msg.sender, recipient, amount);
     }
 
     /**

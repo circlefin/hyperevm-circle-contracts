@@ -369,7 +369,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         emit Transfer(_recipient, TOKEN_SYSTEM_ADDRESS, _amount);
 
         // Deposit tokens into the CoreDepositWallet
-        coreDepositWallet.depositFor(_sender, _recipient, _amount);
+        coreDepositWallet.depositFor(_recipient, _amount);
         vm.stopPrank();
 
         // Check the balance of the CoreDepositWallet
@@ -400,7 +400,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.assume(_amount > 0);
         vm.expectRevert("Transfer operation failed");
-        coreDepositWallet.deposit(_amount);
+        coreDepositWallet.depositFor(_recipient, _amount);
     }
 
     function testDepositFor_revertsWhenRecipientIsZeroAddress(
@@ -410,8 +410,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_sender != address(0));
         vm.assume(_amount > 0);
 
+        vm.prank(_sender);
         vm.expectRevert("Invalid recipient: zero address");
-        coreDepositWallet.depositFor(_sender, address(0), _amount);
+        coreDepositWallet.depositFor(address(0), _amount);
     }
 
     function testDepositFor_revertsWhenRecipientIsSystemAddress(
@@ -421,8 +422,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_sender != address(0));
         vm.assume(_amount > 0);
 
+        vm.prank(_sender);
         vm.expectRevert("Invalid recipient: system address");
-        coreDepositWallet.depositFor(_sender, TOKEN_SYSTEM_ADDRESS, _amount);
+        coreDepositWallet.depositFor(TOKEN_SYSTEM_ADDRESS, _amount);
     }
 
     function testDepositFor_revertsWhenRecipientIsCoreDepositWallet(
@@ -432,12 +434,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_sender != address(0));
         vm.assume(_amount > 0);
 
+        vm.prank(_sender);
         vm.expectRevert("Invalid recipient: CoreDepositWallet");
-        coreDepositWallet.depositFor(
-            _sender,
-            address(coreDepositWallet),
-            _amount
-        );
+        coreDepositWallet.depositFor(address(coreDepositWallet), _amount);
     }
 
     function testDepositFor_revertsWhenRecipientBlocklisted(
@@ -452,8 +451,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_recipient != address(coreDepositWallet));
 
         MockDepositableToken(TOKEN).blacklist(_recipient);
+
+        vm.prank(_sender);
         vm.expectRevert("Invalid recipient: blacklisted");
-        coreDepositWallet.depositFor(_sender, _recipient, _amount);
+        coreDepositWallet.depositFor(_recipient, _amount);
     }
 
     function testDepositFor_revertsWhenPaused(
@@ -469,8 +470,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         coreDepositWallet.pause();
         assertTrue(coreDepositWallet.paused());
 
+        vm.prank(_sender);
         vm.expectRevert("Pausable: paused");
-        coreDepositWallet.depositFor(_sender, _recipient, _amount);
+        coreDepositWallet.depositFor(_recipient, _amount);
     }
 
     function testDepositFor_revertsWithZeroAmount(
@@ -481,8 +483,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(recipient != TOKEN_SYSTEM_ADDRESS);
         vm.assume(recipient != address(coreDepositWallet));
 
+        vm.prank(sender);
         vm.expectRevert("Amount must be greater than zero");
-        coreDepositWallet.depositFor(sender, recipient, 0);
+        coreDepositWallet.depositFor(recipient, 0);
     }
 
     function testDepositWithAuth_succeeds(

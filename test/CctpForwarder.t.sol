@@ -492,7 +492,6 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             address(CORE_DEPOSIT_WALLET),
             abi.encodeWithSelector(
                 MockCoreDepositWallet.depositFor.selector,
-                address(forwarder),
                 FORWARD_RECIPIENT,
                 AMOUNT - FEE_EXECUTED
             ),
@@ -546,7 +545,6 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             address(CORE_DEPOSIT_WALLET),
             abi.encodeWithSelector(
                 MockCoreDepositWallet.depositFor.selector,
-                address(forwarder),
                 FORWARD_RECIPIENT,
                 AMOUNT - FEE_EXECUTED
             )
