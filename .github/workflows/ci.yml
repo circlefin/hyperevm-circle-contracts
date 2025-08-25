@@ -5,10 +5,10 @@ on:
     branches: [master]
 jobs:
   lint-and-test:
-    runs-on: large-dind-spot
+    runs-on: ubuntu-latest
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: "recursive"
 
