@@ -23,7 +23,7 @@ Deploy the CoreDepositWallet implementation, deploy the proxy, and initialize th
    - `CORE_DEPOSIT_WALLET_PAUSER_ADDRESS`
    - `CORE_DEPOSIT_WALLET_RESCUER_ADDRESS`
 
-3. Run `make simulate-deploy-core-deposit-wallet RPC_URL=<RPC_URL> SENDER=<SENDER> CREATE2_FACTORY_OWNER_KEY=<CREATE2_FACTORY_OWNER_KEY>` to perform a dry run.
+3. Run `make simulate-deploy-core-deposit-wallet RPC_URL=<RPC_URL> SENDER=<SENDER>` to perform a dry run.
 
 4. Run `make deploy-core-deposit-wallet RPC_URL=<RPC_URL> CREATE2_FACTORY_OWNER_KEY=<CREATE2_FACTORY_OWNER_KEY>` to deploy the CoreDepositWallet implementation, deploy the proxy, and initialize the proxy.
 
@@ -47,7 +47,7 @@ Deploy the CctpForwarder implementation, deploy the proxy, and initialize the pr
    - `CCTP_FORWARDER_TOKEN_ADDRESSES` (comma-separated list of token addresses)
    - `CCTP_FORWARDER_FORWARDING_ADDRESSES` (comma-separated list of forwarding addresses)
 
-3. Run `make simulate-deploy-cctp-forwarder RPC_URL=<RPC_URL> SENDER=<SENDER> CREATE2_FACTORY_OWNER_KEY=<CREATE2_FACTORY_OWNER_KEY>` to perform a dry run.
+3. Run `make simulate-deploy-cctp-forwarder RPC_URL=<RPC_URL> SENDER=<SENDER>` to perform a dry run.
 
 4. Run `make deploy-cctp-forwarder RPC_URL=<RPC_URL> CREATE2_FACTORY_OWNER_KEY=<CREATE2_FACTORY_OWNER_KEY>` to deploy the CctpForwarder implementation, deploy the proxy, and initialize the proxy.
 
@@ -64,9 +64,9 @@ Deploy the CctpExtension implementation.
    - `CCTP_EXTENSION_OWNER_ADDRESS`
    - `CCTP_EXTENSION_RESCUER_ADDRESS`
    - `TOKEN_MESSENGER_ADDRESS`
-   - `TOKEN_CONTRACT_ADDRESS`
+   - `TOKEN_CONTRACT_ADDRESS` (ensure only one declaration of `TOKEN_CONTRACT_ADDRESS`)
 
-3. Run `make simulate-deploy-cctp-extension RPC_URL=<RPC_URL> SENDER=<SENDER> CREATE2_FACTORY_OWNER_KEY=<CREATE2_FACTORY_OWNER_KEY>` to perform a dry run.
+3. Run `make simulate-deploy-cctp-extension RPC_URL=<RPC_URL> SENDER=<SENDER>` to perform a dry run.
 
 4. Run `make deploy-cctp-extension RPC_URL=<RPC_URL> CREATE2_FACTORY_OWNER_KEY=<CREATE2_FACTORY_OWNER_KEY>` to deploy the CctpExtension implementation.
 
@@ -76,7 +76,7 @@ The [PredictCreate2Deployments.s.sol](scripts/PredictCreate2Deployments.s.sol) s
 
 - Predicting CoreDepositWallet Proxy: `forge script scripts/PredictCreate2Deployments.s.sol --sig "coreDepositWalletProxy(address)" <create2FactoryAddress>`
 - Predicting CctpForwarder Proxy: `forge script scripts/PredictCreate2Deployments.s.sol --sig "cctpForwarderProxy(address)" <create2FactoryAddress>`
-- Predicting CctpExtension: `forge script scripts/PredictCreate2Deployments.s.sol --sig "cctpExtension(address,address,address,address,address)" <create2FactoryAddress> <ownerAddress> <rescuerAddress> <tokenMessengerAddress> <tokenAddress>`
+- Predicting CctpExtension: `forge script scripts/PredictCreate2Deployments.s.sol --sig "cctpExtension(address)" <create2FactoryAddress>`
 
 - Predicting CoreDepositWallet Implementation: `forge script scripts/PredictCreate2Deployments.s.sol --sig "coreDepositWalletImpl(address,address,address)" <create2FactoryAddress> <tokenContractAddress> <tokenSystemAddress>`
 - Predicting CctpForwarder Implementation: `forge script scripts/PredictCreate2Deployments.s.sol --sig "cctpForwarderImpl(address,address,uint32,uint32)" <create2FactoryAddress> <messageTransmitterAddress> <supportedMessageVersion> <supportedBurnMessageVersion>`
