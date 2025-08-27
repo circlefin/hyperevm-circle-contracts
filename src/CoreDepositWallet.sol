@@ -96,7 +96,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      * @param amount The amount of tokens being deposited.
      */
     function deposit(uint256 amount) external override whenNotPaused {
-        _deposit(msg.sender, msg.sender, amount);
+        _deposit(msg.sender, amount);
     }
 
     /**
@@ -109,7 +109,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         require(recipient != tokenSystemAddress, "Invalid recipient: system address");
         require(recipient != address(this), "Invalid recipient: CoreDepositWallet");
         require(!token.isBlacklisted(recipient), "Invalid recipient: blacklisted");
-        _deposit(msg.sender, recipient, amount);
+        _deposit(recipient, amount);
     }
 
     /**
@@ -162,14 +162,13 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     }
 
     /**
-     * @dev Handles the token transfer from the sender to the CoreDepositWallet.
-     * @param _sender The address initiating the deposit on HyperCore.
+     * @dev Handles the token transfer to the CoreDepositWallet on behalf of recipient.
      * @param _recipient The address receiving the tokens on HyperEVM.
      * @param _amount The amount of tokens being deposited.
      */
-    function _deposit(address _sender, address _recipient, uint256 _amount) internal {
+    function _deposit(address _recipient, uint256 _amount) internal {
         require(_amount > 0, "Amount must be greater than zero");
-        require(token.transferFrom(_sender, address(this), _amount), "Transfer operation failed");
+        require(token.transferFrom(msg.sender, address(this), _amount), "Transfer operation failed");
         
         emit Transfer(_recipient, tokenSystemAddress, _amount);
     }

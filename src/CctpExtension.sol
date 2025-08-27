@@ -30,8 +30,8 @@ import {TokenMessengerV2} from "@evm-cctp-contracts/v2/TokenMessengerV2.sol";
 /**
  * @title CctpExtension
  * @notice Facilitates cross-chain token transfers using ERC-3009 token authorization
- *         combined with CCTP's deposit-for-burn mechanism. Implements batching
- *         to optimize gas costs for multiple burn operations.
+ *         combined with CCTP's deposit-for-burn mechanism. Supports batching
+ *         multiple CCTP burn messages in a single transaction.
  */
 contract CctpExtension is ICctpExtension, Rescuable, Initializable {
     using SafeERC20 for IERC20;
