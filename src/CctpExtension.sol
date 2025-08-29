@@ -20,7 +20,6 @@ pragma abicoder v2;
 
 import {ICctpExtension} from "./interfaces/ICctpExtension.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
-import {SafeMath} from "@openzeppelin/contracts/math/SafeMath.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Rescuable} from "./roles/Rescuable.sol";
 import {Initializable} from "@evm-cctp-contracts/proxy/Initializable.sol";
@@ -35,7 +34,6 @@ import {TokenMessengerV2} from "@evm-cctp-contracts/v2/TokenMessengerV2.sol";
  */
 contract CctpExtension is ICctpExtension, Rescuable, Initializable {
     using SafeERC20 for IERC20;
-    using SafeMath for uint256;
 
     //=========================== Structs ============================
 
@@ -88,11 +86,18 @@ contract CctpExtension is ICctpExtension, Rescuable, Initializable {
         ReceiveWithAuthorizationData calldata _receiveWithAuthorizationData,
         DepositForBurnWithHookData calldata _depositForBurnData
     ) external override {
-        // 1. Pull the total amount from the ERC-3009 authorization
+        uint256 totalAmount = _receiveWithAuthorizationData.amount;
+        uint256 batchSize = _depositForBurnData.amount;
+
+        require(totalAmount > 0, "Total amount must be positive");
+        require(batchSize > 0, "Batch size must be positive");
+        require(totalAmount % batchSize == 0, "Total amount must be divisible by batch size");
+
+        // Receive the tokens from the sender
         IEIP3009Token(token).receiveWithAuthorization(
             msg.sender,
             address(this),
-            _receiveWithAuthorizationData.amount,
+            totalAmount,
             _receiveWithAuthorizationData.authValidAfter,
             _receiveWithAuthorizationData.authValidBefore,
             _receiveWithAuthorizationData.authNonce,
@@ -101,17 +106,12 @@ contract CctpExtension is ICctpExtension, Rescuable, Initializable {
             _receiveWithAuthorizationData.s
         );
 
-        // 2. Determine the batch size and remaining amount
-        uint256 batchSize = _depositForBurnData.amount;
-        uint256 remaining = _receiveWithAuthorizationData.amount;
-
-        // 3. Perform the deposit for burn with or without hook data
+        // Deposit the tokens for burn
+        uint256 batchCount = totalAmount / batchSize;
         if (_depositForBurnData.hookData.length > 0) {
-            // Execute batched burns with hook data
-            while (remaining > 0) {
-                uint256 batchAmount = remaining > batchSize ? batchSize : remaining;
+            for (uint256 i = 0; i < batchCount; ++i) {
                 TokenMessengerV2(tokenMessenger).depositForBurnWithHook(
-                    batchAmount,
+                    batchSize,
                     _depositForBurnData.destinationDomain,
                     _depositForBurnData.mintRecipient,
                     token,
@@ -120,14 +120,11 @@ contract CctpExtension is ICctpExtension, Rescuable, Initializable {
                     _depositForBurnData.minFinalityThreshold,
                     _depositForBurnData.hookData
                 );
-                remaining = remaining.sub(batchAmount);
             }
         } else {
-            // Execute batched burns without hook data
-            while (remaining > 0) {
-                uint256 batchAmount = remaining > batchSize ? batchSize : remaining;
+            for (uint256 i = 0; i < batchCount; ++i) {
                 TokenMessengerV2(tokenMessenger).depositForBurn(
-                    batchAmount,
+                    batchSize,
                     _depositForBurnData.destinationDomain,
                     _depositForBurnData.mintRecipient,
                     token,
@@ -135,7 +132,6 @@ contract CctpExtension is ICctpExtension, Rescuable, Initializable {
                     _depositForBurnData.maxFee,
                     _depositForBurnData.minFinalityThreshold
                 );
-                remaining = remaining.sub(batchAmount);
             }
         }
     }

@@ -27,7 +27,7 @@ pragma abicoder v2;
 interface ICctpExtension {
     /**
      * @notice The data needed to call receiveWithAuthorization on the IEIP3009Token contract.
-     * @param amount                Total amount to authorize and transfer via ERC-3009
+     * @param amount                Total amount to authorize and transfer via ERC-3009. Must be > 0.
      * @param authValidAfter        The time after which the authorization is valid (unix time)
      * @param authValidBefore       The time before which authorization is valid (unix time)
      * @param authNonce             The authorization unique nonce
@@ -47,7 +47,8 @@ interface ICctpExtension {
 
     /**
      * @notice The data needed to call depositForBurn on the ITokenMessenger contract.
-     * @param amount                Amount per individual burn operation
+     * @param amount                Per-burn amount (batch size). Must be > 0 and evenly divide
+     *                              the total authorized amount in batchDepositForBurnWithAuth.
      * @param destinationDomain     Domain of the chain where the tokens will be minted
      * @param mintRecipient         Recipient of the tokens on the destination chain
      * @param destinationCaller     Authorized caller on the destination domain, as bytes32. If equal to bytes32(0),
@@ -67,17 +68,25 @@ interface ICctpExtension {
     }
 
     /**
-     * @notice Executes deposit-for-burn operations by combining ERC-3009 authorization with CCTP burns.
-     *         Can perform either a single burn or multiple batched burns based on implementation logic.
-     * @dev This function can be only called by the ERC-3009 authorization signer.
-     *      Implementation determines batching behavior by comparing the total authorized amount
-     *      with the per-burn amount specified in the burn data. If total > per-burn amount,
-     *      multiple burns are performed until remaining balance from the ERC-3009 authorization is zero.
+     * @notice Executes CCTP burns using an ERC-3009 authorization. Runs either a single burn or
+     *         multiple equal-sized burns based on the provided batch size.
+     * @dev Caller must be the ERC-3009 authorization signer.
      *
-     * @param _receiveWithAuthorizationData ERC-3009 authorization data (see ReceiveWithAuthorizationData struct).
+     * Validation (checked before any token movement):
+     * - `_receiveWithAuthorizationData.amount` must be > 0.
+     * - `_depositForBurnData.amount` (batch size) must be > 0.
+     * - `_receiveWithAuthorizationData.amount` must be evenly divisible by `_depositForBurnData.amount`.
+     *
+     * Batching semantics:
+     * - Total authorized amount: `_receiveWithAuthorizationData.amount`.
+     * - Batch size (per burn): `_depositForBurnData.amount`.
+     * - Number of burns: total / batch size. Each burn uses the same batch size.
+     *
+     *
+     * @param _receiveWithAuthorizationData ERC-3009 authorization data (see ReceiveWithAuthorizationData).
      *                                      Its `amount` is the total to be authorized and burned.
-     * @param _depositForBurnData CCTP parameters for burn operations (see DepositForBurnWithHookData struct).
-     *                            Implementation uses a per-burn amount from this data to determine batching.
+     * @param _depositForBurnData           CCTP parameters for burn operations (see DepositForBurnWithHookData).
+     *                                      Its `amount` is the per-burn batch size.
      */
     function batchDepositForBurnWithAuth(
         ReceiveWithAuthorizationData calldata _receiveWithAuthorizationData,
