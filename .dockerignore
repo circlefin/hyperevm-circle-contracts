@@ -4,7 +4,6 @@ node_modules
 *.md
 .gitignore
 .dockerignore
-out
 cache
 coverage
 .env*

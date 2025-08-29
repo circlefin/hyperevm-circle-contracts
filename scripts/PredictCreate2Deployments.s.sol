@@ -81,6 +81,7 @@ contract PredictCreate2Deployments is Script {
     function cctpForwarderImpl(
         address create2Factory,
         address messageTransmitter,
+        address tokenMessenger,
         uint32 supportedMessageVersion,
         uint32 supportedBurnMessageVersion
     ) public returns (address) {
@@ -92,6 +93,7 @@ contract PredictCreate2Deployments is Script {
                         type(CctpForwarder).creationCode,
                         abi.encode(
                             messageTransmitter,
+                            tokenMessenger,
                             supportedMessageVersion,
                             supportedBurnMessageVersion
                         )

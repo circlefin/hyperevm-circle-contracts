@@ -33,6 +33,7 @@ contract DeployCctpForwarderScript is Script {
 
     // Constructor arguments
     address private messageTransmitter;
+    address private tokenMessenger;
     uint32 private supportedMessageVersion;
     uint32 private supportedBurnMessageVersion;
 
@@ -56,6 +57,7 @@ contract DeployCctpForwarderScript is Script {
                     type(CctpForwarder).creationCode,
                     abi.encode(
                         messageTransmitter,
+                        tokenMessenger,
                         supportedMessageVersion,
                         supportedBurnMessageVersion
                     )
@@ -128,6 +130,7 @@ contract DeployCctpForwarderScript is Script {
 
         // CctpForwarder constructor arguments
         messageTransmitter = vm.envAddress("MESSAGE_TRANSMITTER_ADDRESS");
+        tokenMessenger = vm.envAddress("TOKEN_MESSENGER_ADDRESS");
         supportedMessageVersion = uint32(
             vm.envUint("SUPPORTED_MESSAGE_VERSION")
         );

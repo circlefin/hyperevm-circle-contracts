@@ -144,6 +144,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     function test_Constructor_setsExpectedValues() public {
         CctpForwarder _forwarder = new CctpForwarder(
             MESSAGE_TRANSMITTER,
+            TOKEN_MESSENGER,
             MESSAGE_VERSION,
             BURN_VERSION
         );
@@ -160,7 +161,22 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
 
     function test_Constructor_revertsIfMessageTransmitterNotSet() public {
         vm.expectRevert("MessageTransmitter not set");
-        new CctpForwarder(address(0), MESSAGE_VERSION, BURN_VERSION);
+        new CctpForwarder(
+            address(0),
+            TOKEN_MESSENGER,
+            MESSAGE_VERSION,
+            BURN_VERSION
+        );
+    }
+
+    function test_Constructor_revertsIfTokenMessengerNotSet() public {
+        vm.expectRevert("TokenMessenger not set");
+        new CctpForwarder(
+            MESSAGE_TRANSMITTER,
+            address(0),
+            MESSAGE_VERSION,
+            BURN_VERSION
+        );
     }
 
     function test_MintAndForward_revertsIfInvalidMessage() public {
@@ -242,6 +258,35 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             burnMessage
         );
         vm.expectRevert("Forwarding address not set");
+        forwarder.mintAndForward(message, VALID_SIGNATURE);
+    }
+
+    function test_MintAndForward_revertsIfInvalidTokenMessenger(
+        address invalidTokenMessenger
+    ) public {
+        vm.assume(invalidTokenMessenger != TOKEN_MESSENGER);
+
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
+            BURN_VERSION,
+            BURN_TOKEN,
+            MINT_RECIPIENT,
+            AMOUNT,
+            MESSAGE_SENDER,
+            MAX_FEE,
+            FEE_EXECUTED,
+            EXPIRATION_BLOCK,
+            HOOK_DATA
+        );
+        bytes memory message = _formatMessageForForwarding(
+            MESSAGE_VERSION,
+            SOURCE_DOMAIN,
+            DESTINATION_DOMAIN,
+            SENDER,
+            invalidTokenMessenger.toBytes32(),
+            DESTINATION_CALLER,
+            burnMessage
+        );
+        vm.expectRevert("Invalid message recipient");
         forwarder.mintAndForward(message, VALID_SIGNATURE);
     }
 
@@ -360,11 +405,17 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
         MockStatefulTokenMessengerV2 statefulTokenMessenger = new MockStatefulTokenMessengerV2(
                 address(TOKEN_MINTER)
             );
+        CctpForwarder _forwarder = new CctpForwarder(
+            MESSAGE_TRANSMITTER,
+            address(statefulTokenMessenger),
+            MESSAGE_VERSION,
+            BURN_VERSION
+        );
 
         bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
-            MINT_RECIPIENT,
+            address(_forwarder).toBytes32(),
             AMOUNT,
             MESSAGE_SENDER,
             MAX_FEE,
@@ -389,7 +440,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             )
         );
         vm.expectRevert(); // EvmError: StateChangeDuringStaticCall
-        forwarder.mintAndForward(message, VALID_SIGNATURE);
+        _forwarder.mintAndForward(message, VALID_SIGNATURE);
         assertEq(statefulTokenMessenger.counter(), 0);
     }
 
@@ -1059,6 +1110,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
         // Deploy v2 implementation
         MockCctpForwarderV2 _implV2 = new MockCctpForwarderV2(
             MESSAGE_TRANSMITTER,
+            TOKEN_MESSENGER,
             MESSAGE_VERSION + 1,
             BURN_VERSION
         );

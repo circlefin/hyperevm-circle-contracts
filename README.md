@@ -38,6 +38,7 @@ Deploy the CctpForwarder implementation, deploy the proxy, and initialize the pr
    - `CREATE2_FACTORY_CONTRACT_ADDRESS`
 
    - `MESSAGE_TRANSMITTER_ADDRESS`
+   - `TOKEN_MESSENGER_ADDRESS`
    - `SUPPORTED_MESSAGE_VERSION`
    - `SUPPORTED_BURN_MESSAGE_VERSION`
 
@@ -79,4 +80,4 @@ The [PredictCreate2Deployments.s.sol](scripts/PredictCreate2Deployments.s.sol) s
 - Predicting CctpExtension: `forge script scripts/PredictCreate2Deployments.s.sol --sig "cctpExtension(address)" <create2FactoryAddress>`
 
 - Predicting CoreDepositWallet Implementation: `forge script scripts/PredictCreate2Deployments.s.sol --sig "coreDepositWalletImpl(address,address,address)" <create2FactoryAddress> <tokenContractAddress> <tokenSystemAddress>`
-- Predicting CctpForwarder Implementation: `forge script scripts/PredictCreate2Deployments.s.sol --sig "cctpForwarderImpl(address,address,uint32,uint32)" <create2FactoryAddress> <messageTransmitterAddress> <supportedMessageVersion> <supportedBurnMessageVersion>`
+- Predicting CctpForwarder Implementation: `forge script scripts/PredictCreate2Deployments.s.sol --sig "cctpForwarderImpl(address,address,address,uint32,uint32)" <create2FactoryAddress> <messageTransmitterAddress> <tokenMessengerAddress> <supportedMessageVersion> <supportedBurnMessageVersion>`

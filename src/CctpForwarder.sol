@@ -80,6 +80,9 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
     // Local CCTP Message Transmitter
     IReceiver public immutable messageTransmitter;
 
+    // Local CCTP Token Messenger
+    TokenMessengerV2 public immutable tokenMessenger;
+
     // Maps local ERC20 token address to associated forwarding address
     mapping(address => address) public tokenToForwardingAddress;
 
@@ -94,11 +97,13 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
     /**
      * @notice Constructor
      * @param _messageTransmitter CCTP message transmitter
+     * @param _tokenMessenger CCTP token messenger
      * @param _supportedMessageVersion Supported message version
      * @param _supportedBurnMessageVersion Supported burn message version
      */
     constructor(
         address _messageTransmitter,
+        address _tokenMessenger,
         uint32 _supportedMessageVersion,
         uint32 _supportedBurnMessageVersion
     ) {
@@ -106,7 +111,9 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
             _messageTransmitter != address(0),
             "MessageTransmitter not set"
         );
+        require(_tokenMessenger != address(0), "TokenMessenger not set");
         messageTransmitter = IReceiver(_messageTransmitter);
+        tokenMessenger = TokenMessengerV2(_tokenMessenger);
         supportedMessageVersion = _supportedMessageVersion;
         supportedBurnMessageVersion = _supportedBurnMessageVersion;
         _disableInitializers();
@@ -149,18 +156,13 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
         bytes calldata attestation
     ) external override {
         (
-            address tokenMessenger,
             uint32 sourceDomain,
             bytes32 burnToken,
             address forwardRecipient
         ) = _validateCctpMessage(message);
 
         // Get local token address
-        address localToken = _getLocalToken(
-            tokenMessenger,
-            sourceDomain,
-            burnToken
-        );
+        address localToken = _getLocalToken(sourceDomain, burnToken);
 
         // Get forwarding address
         address forwardingAddress = tokenToForwardingAddress[localToken];
@@ -275,7 +277,6 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
     /**
      * @notice Validate CCTP message and extract message details
      * @param _message CCTP receive message
-     * @return tokenMessenger Token messenger
      * @return sourceDomain Source domain
      * @return burnToken Burn token
      * @return forwardRecipient Forward recipient
@@ -286,7 +287,6 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
         internal
         view
         returns (
-            address tokenMessenger,
             uint32 sourceDomain,
             bytes32 burnToken,
             address forwardRecipient
@@ -308,8 +308,11 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
         );
 
         sourceDomain = message._getSourceDomain();
-        // Assume recipient is local token messenger
-        tokenMessenger = message._getRecipient().toAddress();
+        require(
+            message._getRecipient().toAddress() == address(tokenMessenger),
+            "Invalid message recipient"
+        );
+
         burnToken = burnMessage._getBurnToken();
 
         // Mint recipient must be this contract
@@ -327,20 +330,15 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
      * @notice Get local token address from message recipient
      * @dev This function is static for safety. Assumes the message recipient is
      * a valid token messenger and points to a valid local minter.
-     * @param tokenMessenger Token messenger
      * @param sourceDomain Source domain
      * @param burnToken Burn token
      * @return localToken Local token address
      */
     function _getLocalToken(
-        address tokenMessenger,
         uint32 sourceDomain,
         bytes32 burnToken
     ) internal view returns (address) {
         return
-            TokenMessengerV2(tokenMessenger).localMinter().getLocalToken(
-                sourceDomain,
-                burnToken
-            );
+            tokenMessenger.localMinter().getLocalToken(sourceDomain, burnToken);
     }
 }

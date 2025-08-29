@@ -23,11 +23,13 @@ import {CctpForwarder} from "../../src/CctpForwarder.sol";
 contract MockCctpForwarderV2 is CctpForwarder {
     constructor(
         address _messageTransmitter,
+        address _tokenMessenger,
         uint32 _supportedMessageVersion,
         uint32 _supportedBurnMessageVersion
     )
         CctpForwarder(
             _messageTransmitter,
+            _tokenMessenger,
             _supportedMessageVersion,
             _supportedBurnMessageVersion
         )

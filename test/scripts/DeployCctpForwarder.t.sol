@@ -69,6 +69,7 @@ contract DeployCctpForwarderTest is DeployScriptTestUtils {
             .cctpForwarderImpl(
                 address(create2Factory),
                 MESSAGE_TRANSMITTER,
+                TOKEN_MESSENGER,
                 MESSAGE_VERSION,
                 BURN_VERSION
             );

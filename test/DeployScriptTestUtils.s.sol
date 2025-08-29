@@ -142,6 +142,7 @@ contract DeployScriptTestUtils is Test {
             "MESSAGE_TRANSMITTER_ADDRESS",
             vm.toString(MESSAGE_TRANSMITTER)
         );
+        vm.setEnv("TOKEN_MESSENGER_ADDRESS", vm.toString(TOKEN_MESSENGER));
         vm.setEnv(
             "SUPPORTED_MESSAGE_VERSION",
             vm.toString(uint256(MESSAGE_VERSION))
