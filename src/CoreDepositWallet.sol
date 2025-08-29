@@ -52,7 +52,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      * @param to The address receiving the withdrawn tokens.
      * @param value The amount of tokens being withdrawn.
      */
-    event Withdraw(address to, uint256 value);
+    event Withdraw(address indexed to, uint256 value);
 
     // ============ State Variables ============
 

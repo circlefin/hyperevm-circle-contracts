@@ -45,6 +45,23 @@ contract CctpExtensionTest is Test, TestUtils {
         );
     }
 
+    //=========================== Events ============================
+    /**
+     * @notice Emitted when a batch deposit for burn is initiated.
+     * @param batchCount The total number of burn messages.
+     * @param batchSize The amount for each burn message.
+     * @param depositor The depositor address.
+     * @param mintRecipient The address to receive the minted tokens on the destination chain, as bytes32.
+     * @param destinationDomain The CCTP domain ID of the destination chain.
+     */
+    event BatchDepositForBurn(
+        uint256 batchCount,
+        uint256 batchSize,
+        address depositor,
+        bytes32 mintRecipient,
+        uint32 destinationDomain
+    );
+
     //=========================== Constructor Tests ============================
 
     function testConstructor_stateVariablesAreSetCorrectly() public {
@@ -256,6 +273,10 @@ contract CctpExtensionTest is Test, TestUtils {
         // Expect depositForBurn to be called exactly once
         vm.expectCall(tokenMessenger, depositForBurnCall, 1);
 
+        // Expect BatchDepositForBurn event to be emitted
+        vm.expectEmit(true, true, true, true);
+        emit BatchDepositForBurn(1, burnAmount, caller, mintRecipient, burnData.destinationDomain);
+
         // Execute the function
         vm.prank(caller);
         cctpExtension.batchDepositForBurnWithAuth(authData, burnData);
@@ -325,6 +346,10 @@ contract CctpExtensionTest is Test, TestUtils {
         // Expect depositForBurnWithHook to be called exactly once
         vm.expectCall(tokenMessenger, depositForBurnWithHookCall, 1);
 
+        // Expect BatchDepositForBurn event to be emitted
+        vm.expectEmit(true, true, true, true);
+        emit BatchDepositForBurn(1, burnAmount, caller, mintRecipient, burnData.destinationDomain);
+
         // Execute the function
         vm.prank(caller);
         cctpExtension.batchDepositForBurnWithAuth(authData, burnData);
@@ -391,6 +416,10 @@ contract CctpExtensionTest is Test, TestUtils {
 
         // Expect 5 calls of 200 tokens each
         vm.expectCall(tokenMessenger, depositForBurnCall, 5);
+
+        // Expect BatchDepositForBurn event to be emitted
+        vm.expectEmit(true, true, true, true);
+        emit BatchDepositForBurn(5, burnAmount, caller, mintRecipient, burnData.destinationDomain);
 
         // Execute the function
         vm.prank(caller);
@@ -461,6 +490,10 @@ contract CctpExtensionTest is Test, TestUtils {
         // Expect 5 calls of 200 tokens each
         vm.expectCall(tokenMessenger, depositForBurnWithHookCall, 5);
 
+        // Expect BatchDepositForBurn event to be emitted
+        vm.expectEmit(true, true, true, true);
+        emit BatchDepositForBurn(5, burnAmount, caller, mintRecipient, burnData.destinationDomain);
+
         // Execute the function
         vm.prank(caller);
         cctpExtension.batchDepositForBurnWithAuth(authData, burnData);
@@ -524,6 +557,10 @@ contract CctpExtensionTest is Test, TestUtils {
 
         vm.expectCall(address(EIP3009_TOKEN), receiveWithAuthCall, 1);
         vm.expectCall(tokenMessenger, depositForBurnCall, uint64(2));
+
+        // Expect BatchDepositForBurn event to be emitted
+        vm.expectEmit(true, true, true, true);
+        emit BatchDepositForBurn(2, burnAmount, caller, mintRecipient, burnData.destinationDomain);
 
         vm.prank(caller);
         cctpExtension.batchDepositForBurnWithAuth(authData, burnData);
@@ -589,6 +626,10 @@ contract CctpExtensionTest is Test, TestUtils {
 
         vm.expectCall(address(EIP3009_TOKEN), receiveWithAuthCall, 1);
         vm.expectCall(tokenMessenger, depositForBurnWithHookCall, uint64(2));
+
+        // Expect BatchDepositForBurn event to be emitted
+        vm.expectEmit(true, true, true, true);
+        emit BatchDepositForBurn(2, burnAmount, caller, mintRecipient, burnData.destinationDomain);
 
         vm.prank(caller);
         cctpExtension.batchDepositForBurnWithAuth(authData, burnData);
@@ -1102,6 +1143,10 @@ contract CctpExtensionTest is Test, TestUtils {
             abi.encode()
         );
 
+        // Expect BatchDepositForBurn event to be emitted
+        vm.expectEmit(true, true, true, true);
+        emit BatchDepositForBurn(authAmount / batchSize, batchSize, caller, mintRecipient, 1);
+
         // Execute
         vm.prank(caller);
         cctpExtension.batchDepositForBurnWithAuth(
@@ -1213,6 +1258,10 @@ contract CctpExtensionTest is Test, TestUtils {
             ),
             abi.encode()
         );
+
+        // Expect BatchDepositForBurn event to be emitted
+        vm.expectEmit(true, true, true, true);
+        emit BatchDepositForBurn(authAmount / batchSize, batchSize, caller, mintRecipient, 1);
 
         // Execute with hook data to test depositForBurnWithHook path
         vm.prank(caller);
@@ -1446,6 +1495,10 @@ contract CctpExtensionTest is Test, TestUtils {
         vm.mockCall(tokenMessenger, depositForBurnCall, abi.encode());
         vm.expectCall(tokenMessenger, depositForBurnCall, uint64(expectedCount));
 
+        // Expect BatchDepositForBurn event to be emitted
+        vm.expectEmit(true, true, true, true);
+        emit BatchDepositForBurn(authAmount / batchSize, batchSize, caller, mintRecipient, 1);
+
         vm.prank(caller);
         cctpExtension.batchDepositForBurnWithAuth(
             ICctpExtension.ReceiveWithAuthorizationData({
@@ -1516,6 +1569,10 @@ contract CctpExtensionTest is Test, TestUtils {
         vm.mockCall(tokenMessenger, depositForBurnWithHookCall, abi.encode());
         vm.expectCall(tokenMessenger, depositForBurnWithHookCall, uint64(expectedCount));
 
+        // Expect BatchDepositForBurn event to be emitted
+        vm.expectEmit(true, true, true, true);
+        emit BatchDepositForBurn(authAmount / batchSize, batchSize, caller, mintRecipient, 1);
+
         vm.prank(caller);
         cctpExtension.batchDepositForBurnWithAuth(
             ICctpExtension.ReceiveWithAuthorizationData({
@@ -1584,6 +1641,10 @@ contract CctpExtensionTest is Test, TestUtils {
             ),
             abi.encode()
         );
+
+        // Expect BatchDepositForBurn event to be emitted
+        vm.expectEmit(true, true, true, true);
+        emit BatchDepositForBurn(1, amount, caller, mintRecipient, 1);
 
         // Execute
         vm.prank(caller);
@@ -1661,6 +1722,10 @@ contract CctpExtensionTest is Test, TestUtils {
 
         // Property: Total burned should equal authorized amount
         assertEq(totalBurned, authAmount, "Total burned amount must equal authorized amount");
+
+        // Expect BatchDepositForBurn event to be emitted
+        vm.expectEmit(true, true, true, true);
+        emit BatchDepositForBurn(authAmount / batchSize, batchSize, caller, mintRecipient, 1);
 
         // Execute the actual function
         vm.prank(caller);

@@ -51,6 +51,23 @@ contract CctpExtension is ICctpExtension, Rescuable, Initializable {
         address token;
     }
 
+    //=========================== Events ============================
+    /**
+     * @notice Emitted when a batch deposit for burn is initiated.
+     * @param batchCount The total number of burn messages.
+     * @param batchSize The amount for each burn message.
+     * @param depositor The depositor address.
+     * @param mintRecipient The address to receive the minted tokens on the destination chain, as bytes32.
+     * @param destinationDomain The CCTP domain ID of the destination chain.
+     */
+    event BatchDepositForBurn(
+        uint256 batchCount,
+        uint256 batchSize,
+        address depositor,
+        bytes32 mintRecipient,
+        uint32 destinationDomain
+    );
+
     //=========================== State Variables ============================
 
     /// @notice The CCTP TokenMessenger contract address
@@ -88,13 +105,15 @@ contract CctpExtension is ICctpExtension, Rescuable, Initializable {
     ) external override {
         uint256 totalAmount = _receiveWithAuthorizationData.amount;
         uint256 batchSize = _depositForBurnData.amount;
+        address _tokenMessenger = tokenMessenger;
+        address _token = token;
 
         require(totalAmount > 0, "Total amount must be positive");
         require(batchSize > 0, "Batch size must be positive");
         require(totalAmount % batchSize == 0, "Total amount must be divisible by batch size");
 
         // Receive the tokens from the sender
-        IEIP3009Token(token).receiveWithAuthorization(
+        IEIP3009Token(_token).receiveWithAuthorization(
             msg.sender,
             address(this),
             totalAmount,
@@ -110,11 +129,11 @@ contract CctpExtension is ICctpExtension, Rescuable, Initializable {
         uint256 batchCount = totalAmount / batchSize;
         if (_depositForBurnData.hookData.length > 0) {
             for (uint256 i = 0; i < batchCount; ++i) {
-                TokenMessengerV2(tokenMessenger).depositForBurnWithHook(
+                TokenMessengerV2(_tokenMessenger).depositForBurnWithHook(
                     batchSize,
                     _depositForBurnData.destinationDomain,
                     _depositForBurnData.mintRecipient,
-                    token,
+                    _token,
                     _depositForBurnData.destinationCaller,
                     _depositForBurnData.maxFee,
                     _depositForBurnData.minFinalityThreshold,
@@ -123,16 +142,24 @@ contract CctpExtension is ICctpExtension, Rescuable, Initializable {
             }
         } else {
             for (uint256 i = 0; i < batchCount; ++i) {
-                TokenMessengerV2(tokenMessenger).depositForBurn(
+                TokenMessengerV2(_tokenMessenger).depositForBurn(
                     batchSize,
                     _depositForBurnData.destinationDomain,
                     _depositForBurnData.mintRecipient,
-                    token,
+                    _token,
                     _depositForBurnData.destinationCaller,
                     _depositForBurnData.maxFee,
                     _depositForBurnData.minFinalityThreshold
                 );
             }
         }
+
+        emit BatchDepositForBurn(
+            batchCount,
+            batchSize,
+            msg.sender,
+            _depositForBurnData.mintRecipient,
+            _depositForBurnData.destinationDomain
+        );
     }
 }

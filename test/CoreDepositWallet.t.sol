@@ -30,7 +30,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     event Transfer(address indexed from, address indexed to, uint256 amount);
 
-    event Withdraw(address to, uint256 value);
+    event Withdraw(address indexed to, uint256 value);
 
     address public newTokenSystemAddress = address(11);
 
