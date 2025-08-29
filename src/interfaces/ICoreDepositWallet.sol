@@ -34,8 +34,9 @@ interface ICoreDepositWallet is IForwardDepositReceiver {
      * @notice Handles the token transfer from the ICoreDepositWallet to the recipient.
      * @param to The address receiving the tokens.
      * @param amount The amount of tokens being transferred.
+     * @return success True if the transfer succeeded.
      */
-    function transfer(address to, uint256 amount) external;
+    function transfer(address to, uint256 amount) external returns (bool success);
 
     /**
      * @notice Deposits tokens with authorization.

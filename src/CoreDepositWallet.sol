@@ -152,13 +152,15 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      * @dev This function can only be called by the token's system address.
      * @param to The address receiving the tokens.
      * @param amount The amount of tokens being transferred.
+     * @return success True if the transfer succeeded.
      */
-    function transfer(address to, uint256 amount) external override whenNotPaused {
+    function transfer(address to, uint256 amount) external override whenNotPaused returns (bool success) {
         require(msg.sender == tokenSystemAddress, "Caller is not the system address");
         require(to != tokenSystemAddress, "Invalid to: system address");
         require(token.transfer(to, amount), "Transfer operation failed");
 
         emit Withdraw(to, amount);
+        return true;
     }
 
     /**

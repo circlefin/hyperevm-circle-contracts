@@ -597,7 +597,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Transfer tokens from the CoreDepositWallet
         vm.prank(TOKEN_SYSTEM_ADDRESS);
-        coreDepositWallet.transfer(_to, _amount);
+        assertTrue(coreDepositWallet.transfer(_to, _amount));
 
         // Check the balance of the _to address
         assertEq(MockDepositableToken(TOKEN).balanceOf(_to), _amount);

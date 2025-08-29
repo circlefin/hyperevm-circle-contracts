@@ -39,5 +39,7 @@ contract MockCoreDepositWallet is ICoreDepositWallet {
         bytes32 s
     ) external override {}
 
-    function transfer(address to, uint256 amount) external override {}
+    function transfer(address to, uint256 amount) external override returns (bool success) {
+        return true;
+    }
 }
