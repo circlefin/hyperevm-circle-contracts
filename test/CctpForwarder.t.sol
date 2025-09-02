@@ -713,11 +713,11 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
         forwarder.mintAndForward(message, VALID_SIGNATURE);
     }
 
-    // Test that magic bytes can be set to 0 - currently no validation is implemented
+    // Test that magic bytes can be set to 0 - no validation is implemented
     // so this test verifies the current behavior (should succeed)
     function test_MintAndForward_succeedsWithZeroMagicBytes() public {
         bytes memory hookWithZeroMagicBytes = abi.encodePacked(
-            bytes24(0), // zero magic bytes - no validation implemented yet
+            bytes24(0), // zero magic bytes - no validation implemented
             uint32(0),
             uint32(20),
             FORWARD_RECIPIENT
@@ -750,7 +750,49 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             TOKEN,
             AMOUNT - FEE_EXECUTED
         );
-        // Currently no magic bytes validation is implemented, so this should succeed
+        // No magic bytes validation is implemented, so this should succeed
+        forwarder.mintAndForward(message, VALID_SIGNATURE);
+    }
+
+        function test_MintAndForward_succeedsWithLongHookData() public {
+        bytes memory hookWithZeroMagicBytes = abi.encodePacked(
+            bytes24(0),
+            uint32(0),
+            uint32(20),
+            FORWARD_RECIPIENT,
+            uint256(9001) // extra data at the end
+        );
+        assertEq(hookWithZeroMagicBytes.length, 84);
+        
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
+            BURN_VERSION,
+            BURN_TOKEN,
+            MINT_RECIPIENT,
+            AMOUNT,
+            MESSAGE_SENDER,
+            MAX_FEE,
+            FEE_EXECUTED,
+            EXPIRATION_BLOCK,
+            hookWithZeroMagicBytes
+        );
+        bytes memory message = _formatMessageForForwarding(
+            MESSAGE_VERSION,
+            SOURCE_DOMAIN,
+            DESTINATION_DOMAIN,
+            SENDER,
+            RECIPIENT,
+            DESTINATION_CALLER,
+            burnMessage
+        );
+        // Expect MintAndForward event
+        vm.expectEmit(true, true, true, true);
+        emit MintAndForward(
+            FORWARD_RECIPIENT,
+            address(CORE_DEPOSIT_WALLET),
+            TOKEN,
+            AMOUNT - FEE_EXECUTED
+        );
+        // No magic bytes validation is implemented, so this should succeed
         forwarder.mintAndForward(message, VALID_SIGNATURE);
     }
 
