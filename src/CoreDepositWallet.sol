@@ -24,17 +24,41 @@ import {Pausable} from "@evm-cctp-contracts/roles/Pausable.sol";
 import {Rescuable} from "./roles/Rescuable.sol";
 import {Initializable} from "@evm-cctp-contracts/proxy/Initializable.sol";
 import {IDepositableToken} from "./interfaces/IDepositableToken.sol";
+import {ICoreWriter} from "./interfaces/ICoreWriter.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/SafeCast.sol";
 
 /**
  * @title CoreDepositWallet
  * @notice Contract for managing token deposits and transfers between HyperEVM and HyperCore.
  */
 contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializable {
+    using SafeCast for uint256;
+
+    // ============ Constants ============
+    uint8 private constant ACTION_VERSION = 0x01;
+    uint24 private constant SEND_ASSET_ACTION_ID = 0x00000D;
+    uint64 private constant TOKEN_INDEX = 0x0000000000000000;
+    uint32 private constant SOURCE_SPOT_DEX = type(uint32).max;
+    uint32 private constant DESTINATION_PERP_DEX = 0x00000000;
+    address private constant CORE_WRITER_ADDRESS = 0x3333333333333333333333333333333333333333;
+
     // ============ Structs ============
     struct CoreDepositWalletRoles {
         address owner;
         address pauser;
         address rescuer;
+    }
+
+    /**
+     * @notice Read-only view of constants used to encode the CoreWriter sendAsset action
+     */
+    struct SendAssetConstants {
+        uint8 actionVersion;
+        uint24 sendAssetActionId;
+        uint64 tokenIndex;
+        uint32 sourceSpotDex;
+        uint32 destinationPerpDex;
+        address coreWriterAddress;
     }
 
     // ============ Events ============
@@ -113,7 +137,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     }
 
     /**
-     * @notice Deposits tokens with authorization to credit the sender on HyperCore. 
+     * @notice Deposits tokens with authorization to credit the sender on HyperCore.
      * @param amount The amount of tokens being deposited.
      * @param authValidAfter The timestamp after which the authorization is valid.
      * @param authValidBefore The timestamp before which the authorization is valid.
@@ -133,18 +157,19 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     ) external override whenNotPaused {
         require(amount > 0, "Amount must be greater than zero");
         token.receiveWithAuthorization(
-            msg.sender, 
-            address(this), 
-            amount, 
-            authValidAfter, 
-            authValidBefore, 
-            authNonce, 
-            v, 
-            r, 
+            msg.sender,
+            address(this),
+            amount,
+            authValidAfter,
+            authValidBefore,
+            authNonce,
+            v,
+            r,
             s
         );
 
-        emit Transfer(msg.sender, tokenSystemAddress, amount);
+        emit Transfer(address(this), tokenSystemAddress, amount);
+        _sendAsset(msg.sender, amount);
     }
 
     /**
@@ -164,15 +189,31 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     }
 
     /**
+     * @notice Returns the CoreWriter sendAsset encoding constants
+     */
+    function getSendAssetConstants() external pure returns (SendAssetConstants memory constants) {
+        return SendAssetConstants({
+            actionVersion: ACTION_VERSION,
+            sendAssetActionId: SEND_ASSET_ACTION_ID,
+            tokenIndex: TOKEN_INDEX,
+            sourceSpotDex: SOURCE_SPOT_DEX,
+            destinationPerpDex: DESTINATION_PERP_DEX,
+            coreWriterAddress: CORE_WRITER_ADDRESS
+        });
+    }
+
+    /**
      * @dev Handles the token transfer to the CoreDepositWallet on behalf of recipient.
-     * @param _recipient The address receiving the tokens on HyperEVM.
+     * @param _recipient The address receiving the tokens on HyperCore.
      * @param _amount The amount of tokens being deposited.
      */
     function _deposit(address _recipient, uint256 _amount) internal {
         require(_amount > 0, "Amount must be greater than zero");
         require(token.transferFrom(msg.sender, address(this), _amount), "Transfer operation failed");
-        
-        emit Transfer(_recipient, tokenSystemAddress, _amount);
+
+        emit Transfer(address(this), tokenSystemAddress, _amount);
+
+        _sendAsset(_recipient, _amount);
     }
 
     /**
@@ -185,5 +226,41 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     function _rescueERC20(IERC20 tokenContract, address to, uint256 amount) internal override {
         require(address(tokenContract) != address(token), "Cannot rescue token");
         super._rescueERC20(tokenContract, to, amount);
+    }
+
+    /**
+     * @notice Move the tokens from spot to perp on HyperCore via CoreWriter sendAsset action.
+     * @dev Encodes a Hyperliquid CoreWriter sendAsset action:
+     *      - Header (packed):
+     *        - version: 1 byte (0x01)
+     *        - actionId: 3 bytes big-endian (0x00000D = send asset)
+     *      - Payload (ABI-encoded):
+     *        (address recipient,         // recipient address on HyperCore
+     *         address subAccount,        // always address(0) (subaccounts unused)
+     *         uint32 sourceDex,          // spot: type(uint32).max
+     *         uint32 destinationDex,     // perp: 0
+     *         uint64 tokenIndex,         // 0 for USD on the main dex
+     *         uint64 amount)             // SafeCast enforces uint64; reverts on overflow
+     *
+     *      Encoding:
+     *        bytes memory payload = abi.encode(
+     *            recipient,
+     *            address(0),
+     *            SOURCE_SPOT_DEX,
+     *            DESTINATION_PERP_DEX,
+     *            TOKEN_INDEX,
+     *            amount.toUint64()
+     *        );
+     *        bytes memory data = abi.encodePacked(ACTION_VERSION, SEND_ASSET_ACTION_ID, payload);
+     *
+     * @param recipient The address receiving the tokens on HyperCore.
+     * @param amount Amount of tokens to send.
+     */
+    function _sendAsset(address recipient, uint256 amount) internal {
+        bytes memory payload =
+            abi.encode(recipient, address(0), SOURCE_SPOT_DEX, DESTINATION_PERP_DEX, TOKEN_INDEX, amount.toUint64());
+
+        bytes memory data = abi.encodePacked(ACTION_VERSION, SEND_ASSET_ACTION_ID, payload);
+        ICoreWriter(CORE_WRITER_ADDRESS).sendRawAction(data);
     }
 }

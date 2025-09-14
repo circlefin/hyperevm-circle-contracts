@@ -25,18 +25,54 @@ import {Test} from "forge-std/Test.sol";
 import {TestUtils} from "./TestUtils.sol";
 import {DeployScriptTestUtils} from "./DeployScriptTestUtils.s.sol";
 import {MockCoreDepositWalletV2} from "./mocks/MockCoreDepositWalletV2.sol";
+import {MockCoreWriter} from "./mocks/MockCoreWriter.sol";
+import {ICoreWriter} from "../src/interfaces/ICoreWriter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     event Transfer(address indexed from, address indexed to, uint256 amount);
 
     event Withdraw(address indexed to, uint256 value);
 
+    event SendRawAction(address indexed user, bytes data);
+
     address public newTokenSystemAddress = address(11);
 
     function setUp() public {
         _deployCreate2Factory();
+        _deployMockCoreWriter();
         _deployCoreDepositWallet();
+    }
+
+    function _deployMockCoreWriter() internal {
+        // Deploy MockCoreWriter at the hardcoded CoreWriter address
+        address coreWriterAddress = 0x3333333333333333333333333333333333333333;
+        vm.etch(coreWriterAddress, type(MockCoreWriter).runtimeCode);
+    }
+
+    // Helper functions
+    function _buildCoreWriterAction(
+        address sender,
+        uint256 amount
+    ) internal pure returns (bytes memory data) {
+        bytes memory encodedAction = abi.encode(
+            sender, // recipient
+            address(0), // subAccount
+            type(uint32).max, // SOURCE_SPOT_DEX
+            uint32(0), // DESTINATION_PERP_DEX
+            uint64(0), // TOKEN_INDEX
+            uint64(amount) // amount as uint64
+        );
+        data = new bytes(4 + encodedAction.length);
+        data[0] = 0x01;
+        data[1] = 0x00;
+        data[2] = 0x00;
+        data[3] = 0x0D;
+        for (uint256 i = 0; i < encodedAction.length; i++) {
+            data[4 + i] = encodedAction[i];
+        }
+        return data;
     }
 
     // Proxy tests
@@ -278,6 +314,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     function testDeposit_succeeds(uint256 _amount, address _sender) public {
         vm.assume(_amount > 0);
+        vm.assume(_amount <= type(uint64).max); // Ensure amount fits in uint64
         vm.assume(_sender != address(0));
 
         // Mint tokens to the sender
@@ -292,7 +329,17 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Check that the Transfer event was emitted
         vm.expectEmit(true, true, true, true);
-        emit Transfer(_sender, TOKEN_SYSTEM_ADDRESS, _amount);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            _amount
+        );
+
+        // Check that the SendRawAction event was emitted from CoreWriter
+        bytes memory expectedData = _buildCoreWriterAction(_sender, _amount);
+
+        vm.expectEmit(true, true, true, true);
+        emit SendRawAction(address(coreDepositWallet), expectedData);
 
         // Deposit tokens into the CoreDepositWallet
         coreDepositWallet.deposit(_amount);
@@ -303,6 +350,57 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
             _amount
         );
+    }
+
+    function testDeposit_succeedsWithMaxUint64Amount(address _sender) public {
+        uint256 amount = type(uint64).max;
+        vm.assume(_sender != address(0));
+
+        // Arrange
+        MockDepositableToken(TOKEN).mint(_sender, amount);
+        vm.startPrank(_sender);
+        MockDepositableToken(TOKEN).approve(address(coreDepositWallet), amount);
+
+        // Expect Transfer and CoreWriter action
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(address(coreDepositWallet), TOKEN_SYSTEM_ADDRESS, amount);
+
+        bytes memory expectedData = _buildCoreWriterAction(_sender, amount);
+        vm.expectEmit(true, true, true, true);
+        emit SendRawAction(address(coreDepositWallet), expectedData);
+
+        // Act
+        coreDepositWallet.deposit(amount);
+        vm.stopPrank();
+
+        // Assert balance
+        assertEq(
+            MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
+            amount
+        );
+    }
+
+    function testDeposit_revertsOnAmountOverflow(
+        uint256 _amount,
+        address _sender
+    ) public {
+        vm.assume(_amount > type(uint64).max);
+        vm.assume(_sender != address(0));
+
+        // Mint tokens to the sender
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
+
+        // Approve the CoreDepositWallet to spend the tokens
+        vm.startPrank(_sender);
+        MockDepositableToken(TOKEN).approve(
+            address(coreDepositWallet),
+            _amount
+        );
+
+        // Expect revert due to SafeCast overflow
+        vm.expectRevert("SafeCast: value doesn't fit in 64 bits");
+        coreDepositWallet.deposit(_amount);
+        vm.stopPrank();
     }
 
     function testDeposit_revertsWhenTransferFails(
@@ -345,6 +443,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint256 _amount
     ) public {
         vm.assume(_amount > 0);
+        vm.assume(_amount <= type(uint64).max); // Ensure amount fits in uint64
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
@@ -362,7 +461,16 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Check that the Transfer event was emitted
         vm.expectEmit(true, true, true, true);
-        emit Transfer(_recipient, TOKEN_SYSTEM_ADDRESS, _amount);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            _amount
+        );
+        // Check that the SendRawAction event was emitted from CoreWriter
+        bytes memory expectedData = _buildCoreWriterAction(_recipient, _amount);
+
+        vm.expectEmit(true, true, true, true);
+        emit SendRawAction(address(coreDepositWallet), expectedData);
 
         // Deposit tokens into the CoreDepositWallet
         coreDepositWallet.depositFor(_recipient, _amount);
@@ -373,6 +481,67 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
             _amount
         );
+    }
+
+    function testDepositFor_succeedsWithMaxUint64Amount(
+        address _sender,
+        address _recipient
+    ) public {
+        uint256 amount = type(uint64).max;
+        vm.assume(_sender != address(0));
+        vm.assume(_recipient != address(0));
+        vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
+        vm.assume(_recipient != address(coreDepositWallet));
+
+        // Arrange
+        MockDepositableToken(TOKEN).mint(_sender, amount);
+        vm.startPrank(_sender);
+        MockDepositableToken(TOKEN).approve(address(coreDepositWallet), amount);
+
+        // Expect Transfer and CoreWriter action
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(address(coreDepositWallet), TOKEN_SYSTEM_ADDRESS, amount);
+
+        bytes memory expectedData = _buildCoreWriterAction(_recipient, amount);
+        vm.expectEmit(true, true, true, true);
+        emit SendRawAction(address(coreDepositWallet), expectedData);
+
+        // Act
+        coreDepositWallet.depositFor(_recipient, amount);
+        vm.stopPrank();
+
+        // Assert balance
+        assertEq(
+            MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
+            amount
+        );
+    }
+
+    function testDepositFor_revertsOnAmountOverflow(
+        uint256 _amount,
+        address _sender,
+        address _recipient
+    ) public {
+        vm.assume(_amount > type(uint64).max);
+        vm.assume(_sender != address(0));
+        vm.assume(_recipient != address(0));
+        vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
+        vm.assume(_recipient != address(coreDepositWallet));
+
+        // Mint tokens to the sender
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
+
+        // Approve the CoreDepositWallet to spend the tokens
+        vm.startPrank(_sender);
+        MockDepositableToken(TOKEN).approve(
+            address(coreDepositWallet),
+            _amount
+        );
+
+        // Expect revert due to SafeCast overflow
+        vm.expectRevert("SafeCast: value doesn't fit in 64 bits");
+        coreDepositWallet.depositFor(_recipient, _amount);
+        vm.stopPrank();
     }
 
     function testDepositFor_revertsWhenTransferFails(
@@ -487,6 +656,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         address _sender
     ) public {
         vm.assume(_amount > 0);
+        vm.assume(_amount <= type(uint64).max); // Bound amount to fit in uint64 for SafeCast
         vm.assume(_sender != address(0));
 
         // Mint tokens to the sender
@@ -494,7 +664,17 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Check that the Transfer event was emitted
         vm.expectEmit(true, true, true, true);
-        emit Transfer(_sender, TOKEN_SYSTEM_ADDRESS, _amount);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            _amount
+        );
+
+        // Check that the SendRawAction event was emitted from CoreWriter
+        bytes memory expectedData = _buildCoreWriterAction(_sender, _amount);
+
+        vm.expectEmit(true, true, true, true);
+        emit SendRawAction(address(coreDepositWallet), expectedData);
 
         // Deposit tokens into the CoreDepositWallet
         vm.prank(_sender);
@@ -512,6 +692,66 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         assertEq(
             MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
             _amount
+        );
+    }
+
+    function testDepositWithAuth_succeedsWithMaxUint64Amount(
+        address _sender
+    ) public {
+        uint256 amount = type(uint64).max;
+        vm.assume(_sender != address(0));
+
+        // Arrange (token is pulled via receiveWithAuthorization)
+        MockDepositableToken(TOKEN).mint(_sender, amount);
+
+        // Expect Transfer and CoreWriter action
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(address(coreDepositWallet), TOKEN_SYSTEM_ADDRESS, amount);
+
+        bytes memory expectedData = _buildCoreWriterAction(_sender, amount);
+        vm.expectEmit(true, true, true, true);
+        emit SendRawAction(address(coreDepositWallet), expectedData);
+
+        // Act
+        vm.prank(_sender);
+        coreDepositWallet.depositWithAuth(
+            amount,
+            0,
+            1,
+            bytes32("nonce"),
+            0,
+            bytes32("r"),
+            bytes32("s")
+        );
+
+        // Assert balance
+        assertEq(
+            MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
+            amount
+        );
+    }
+
+    function testDepositWithAuth_revertsOnAmountOverflow(
+        uint256 _amount,
+        address _sender
+    ) public {
+        vm.assume(_amount > type(uint64).max);
+        vm.assume(_sender != address(0));
+
+        // Mint tokens to the sender
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
+
+        // Expect revert due to SafeCast overflow
+        vm.prank(_sender);
+        vm.expectRevert("SafeCast: value doesn't fit in 64 bits");
+        coreDepositWallet.depositWithAuth(
+            _amount,
+            0,
+            1,
+            bytes32("nonce"),
+            0,
+            bytes32("r"),
+            bytes32("s")
         );
     }
 
@@ -653,5 +893,110 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.expectRevert("Pausable: paused");
         coreDepositWallet.transfer(_to, _amount);
+    }
+
+    function testSendAssetEncoding_matchesSpec(
+        address _sender,
+        uint256 _amount
+    ) public {
+        // Constrain to valid values that avoid SafeCast revert
+        vm.assume(_sender != address(0));
+        vm.assume(_amount > 0 && _amount <= type(uint64).max);
+
+        // Arrange
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
+        vm.startPrank(_sender);
+        MockDepositableToken(TOKEN).approve(
+            address(coreDepositWallet),
+            _amount
+        );
+
+        // Record logs to capture CoreWriter event
+        vm.recordLogs();
+
+        // Act
+        coreDepositWallet.deposit(_amount);
+        vm.stopPrank();
+
+        // Extract the raw action bytes from CoreWriter's SendRawAction event
+        bytes memory rawAction;
+        {
+            Vm.Log[] memory logs = vm.getRecordedLogs();
+            bytes32 sig = keccak256("SendRawAction(address,bytes)");
+            address coreWriter = 0x3333333333333333333333333333333333333333;
+            for (uint256 i = 0; i < logs.length; i++) {
+                if (
+                    logs[i].emitter == coreWriter &&
+                    logs[i].topics.length > 0 &&
+                    logs[i].topics[0] == sig
+                ) {
+                    rawAction = abi.decode(logs[i].data, (bytes));
+                    break;
+                }
+            }
+        }
+        require(rawAction.length > 0, "SendRawAction not found");
+
+        // Validate header: 1-byte version, 3-byte big-endian actionId
+        require(rawAction.length >= 4, "rawAction too short");
+        {
+            uint256 version256 = uint256(uint8(rawAction[0]));
+            uint256 actionId256 = uint256(
+                (uint24(uint8(rawAction[1])) << 16) |
+                    (uint24(uint8(rawAction[2])) << 8) |
+                    uint24(uint8(rawAction[3]))
+            );
+            assertEq(version256, uint256(0x01), "version");
+            assertEq(actionId256, uint256(0x00000D), "actionId");
+        }
+
+        // Slice payload and decode ABI-encoded fields, then assert
+        {
+            bytes memory payload = new bytes(rawAction.length - 4);
+            for (uint256 j = 0; j < payload.length; j++) {
+                payload[j] = rawAction[4 + j];
+            }
+            (
+                address recipient,
+                address subAccount,
+                uint32 sourceDex,
+                uint32 destinationDex,
+                uint64 tokenIndex,
+                uint64 amount64
+            ) = abi.decode(
+                    payload,
+                    (address, address, uint32, uint32, uint64, uint64)
+                );
+
+            assertEq(recipient, _sender, "recipient");
+            assertEq(subAccount, address(0), "subAccount");
+            assertEq(
+                uint256(sourceDex),
+                uint256(type(uint32).max),
+                "sourceDex"
+            );
+            assertEq(uint256(destinationDex), uint256(0), "destinationDex");
+            assertEq(uint256(tokenIndex), uint256(0), "tokenIndex");
+            assertEq(uint256(amount64), uint256(_amount), "amount");
+        }
+    }
+
+    function testGetSendAssetConstants_returnsExpectedValues() public view {
+        CoreDepositWallet.SendAssetConstants memory c = coreDepositWallet
+            .getSendAssetConstants();
+        assertEq(uint256(c.actionVersion), uint256(0x01), "actionVersion");
+        assertEq(uint256(c.sendAssetActionId), uint256(0x00000D), "actionId");
+        assertEq(uint256(c.tokenIndex), uint256(0), "tokenIndex");
+        assertEq(
+            uint256(c.sourceSpotDex),
+            uint256(type(uint32).max),
+            "sourceSpotDex"
+        );
+        assertEq(uint256(c.destinationPerpDex), uint256(0), "destPerpDex");
+        assertEq(
+            c.coreWriterAddress,
+            0x3333333333333333333333333333333333333333,
+            "coreWriterAddress"
+        );
     }
 }
