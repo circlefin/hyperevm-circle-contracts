@@ -386,7 +386,11 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint256 _amount,
         address _sender
     ) public {
-        vm.assume(_amount > type(uint256).max / 100); // Will cause SafeMath multiplication overflow
+        _amount = bound(
+            _amount,
+            type(uint256).max / 100 + 1,
+            type(uint256).max
+        ); // Will cause SafeMath multiplication overflow
         vm.assume(_sender != address(0));
 
         // Mint tokens to the sender
@@ -550,7 +554,11 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         address _sender,
         address _recipient
     ) public {
-        vm.assume(_amount > type(uint256).max / 100); // Will cause SafeMath multiplication overflow
+        _amount = bound(
+            _amount,
+            type(uint256).max / 100 + 1,
+            type(uint256).max
+        ); // Will cause SafeMath multiplication overflow
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
@@ -793,7 +801,11 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint256 _amount,
         address _sender
     ) public {
-        vm.assume(_amount > type(uint256).max / 100); // Will cause SafeMath multiplication overflow
+        _amount = bound(
+            _amount,
+            type(uint256).max / 100 + 1,
+            type(uint256).max
+        ); // Will cause SafeMath multiplication overflow
         vm.assume(_sender != address(0));
 
         // Mint tokens to the sender
