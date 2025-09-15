@@ -26,6 +26,7 @@ import {Initializable} from "@evm-cctp-contracts/proxy/Initializable.sol";
 import {IDepositableToken} from "./interfaces/IDepositableToken.sol";
 import {ICoreWriter} from "./interfaces/ICoreWriter.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/SafeCast.sol";
+import {SafeMath} from "@openzeppelin/contracts/math/SafeMath.sol";
 
 /**
  * @title CoreDepositWallet
@@ -33,6 +34,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/SafeCast.sol";
  */
 contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializable {
     using SafeCast for uint256;
+    using SafeMath for uint256;
 
     // ============ Constants ============
     uint8 private constant ACTION_VERSION = 0x01;
@@ -41,6 +43,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     uint32 private constant SOURCE_SPOT_DEX = type(uint32).max;
     uint32 private constant DESTINATION_PERP_DEX = 0x00000000;
     address private constant CORE_WRITER_ADDRESS = 0x3333333333333333333333333333333333333333;
+    uint256 private constant SCALING_FACTOR = 100; // 6 decimals -> 8 decimals (10^(8-6))
 
     // ============ Structs ============
     struct CoreDepositWalletRoles {
@@ -59,6 +62,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         uint32 sourceSpotDex;
         uint32 destinationPerpDex;
         address coreWriterAddress;
+        uint256 scalingFactor;
     }
 
     // ============ Events ============
@@ -198,7 +202,8 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
             tokenIndex: TOKEN_INDEX,
             sourceSpotDex: SOURCE_SPOT_DEX,
             destinationPerpDex: DESTINATION_PERP_DEX,
-            coreWriterAddress: CORE_WRITER_ADDRESS
+            coreWriterAddress: CORE_WRITER_ADDRESS,
+            scalingFactor: SCALING_FACTOR
         });
     }
 
@@ -230,7 +235,8 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
 
     /**
      * @notice Move the tokens from spot to perp on HyperCore via CoreWriter sendAsset action.
-     * @dev Encodes a Hyperliquid CoreWriter sendAsset action:
+     * @dev Scales amount from 6 decimals (HyperEVM) to 8 decimals (HyperCore).
+     *      Encodes a Hyperliquid CoreWriter sendAsset action:
      *      - Header (packed):
      *        - version: 1 byte (0x01)
      *        - actionId: 3 bytes big-endian (0x00000D = send asset)
@@ -257,8 +263,11 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      * @param amount Amount of tokens to send.
      */
     function _sendAsset(address recipient, uint256 amount) internal {
-        bytes memory payload =
-            abi.encode(recipient, address(0), SOURCE_SPOT_DEX, DESTINATION_PERP_DEX, TOKEN_INDEX, amount.toUint64());
+        uint256 scaledAmount = amount.mul(SCALING_FACTOR);
+
+        bytes memory payload = abi.encode(
+            recipient, address(0), SOURCE_SPOT_DEX, DESTINATION_PERP_DEX, TOKEN_INDEX, scaledAmount.toUint64()
+        );
 
         bytes memory data = abi.encodePacked(ACTION_VERSION, SEND_ASSET_ACTION_ID, payload);
         ICoreWriter(CORE_WRITER_ADDRESS).sendRawAction(data);

@@ -56,13 +56,15 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         address sender,
         uint256 amount
     ) internal pure returns (bytes memory data) {
+        // Scale from 6 decimals (HyperEVM) to 8 decimals (HyperCore) to match contract
+        uint256 scaledAmount = amount * 100;
         bytes memory encodedAction = abi.encode(
             sender, // recipient
             address(0), // subAccount
             type(uint32).max, // SOURCE_SPOT_DEX
             uint32(0), // DESTINATION_PERP_DEX
             uint64(0), // TOKEN_INDEX
-            uint64(amount) // amount as uint64
+            uint64(scaledAmount) // scaled amount as uint64
         );
         data = new bytes(4 + encodedAction.length);
         data[0] = 0x01;
@@ -314,7 +316,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     function testDeposit_succeeds(uint256 _amount, address _sender) public {
         vm.assume(_amount > 0);
-        vm.assume(_amount <= type(uint64).max); // Ensure amount fits in uint64
+        vm.assume(_amount <= type(uint64).max / 100); // Ensure scaled amount fits in uint64
         vm.assume(_sender != address(0));
 
         // Mint tokens to the sender
@@ -353,7 +355,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     }
 
     function testDeposit_succeedsWithMaxUint64Amount(address _sender) public {
-        uint256 amount = type(uint64).max;
+        uint256 amount = type(uint64).max / 100; // Max amount before scaling overflow
         vm.assume(_sender != address(0));
 
         // Arrange
@@ -380,11 +382,37 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
-    function testDeposit_revertsOnAmountOverflow(
+    function testDeposit_revertsOnUint256Overflow(
         uint256 _amount,
         address _sender
     ) public {
-        vm.assume(_amount > type(uint64).max);
+        vm.assume(_amount > type(uint256).max / 100); // Will cause SafeMath multiplication overflow
+        vm.assume(_sender != address(0));
+
+        // Mint tokens to the sender
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
+
+        // Approve the CoreDepositWallet to spend the tokens
+        vm.startPrank(_sender);
+        MockDepositableToken(TOKEN).approve(
+            address(coreDepositWallet),
+            _amount
+        );
+
+        // Expect revert due to SafeMath multiplication overflow
+        vm.expectRevert("SafeMath: multiplication overflow");
+        coreDepositWallet.deposit(_amount);
+        vm.stopPrank();
+    }
+
+    function testDeposit_revertsOnUint64Overflow(
+        uint256 _amount,
+        address _sender
+    ) public {
+        vm.assume(
+            _amount > type(uint64).max / 100 &&
+                _amount <= type(uint256).max / 100
+        ); // Will cause SafeCast overflow after scaling
         vm.assume(_sender != address(0));
 
         // Mint tokens to the sender
@@ -443,7 +471,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint256 _amount
     ) public {
         vm.assume(_amount > 0);
-        vm.assume(_amount <= type(uint64).max); // Ensure amount fits in uint64
+        vm.assume(_amount <= type(uint64).max / 100); // Ensure scaled amount fits in uint64
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
@@ -487,7 +515,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         address _sender,
         address _recipient
     ) public {
-        uint256 amount = type(uint64).max;
+        uint256 amount = type(uint64).max / 100; // Max amount before scaling overflow
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
@@ -517,12 +545,42 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
-    function testDepositFor_revertsOnAmountOverflow(
+    function testDepositFor_revertsOnUint256Overflow(
         uint256 _amount,
         address _sender,
         address _recipient
     ) public {
-        vm.assume(_amount > type(uint64).max);
+        vm.assume(_amount > type(uint256).max / 100); // Will cause SafeMath multiplication overflow
+        vm.assume(_sender != address(0));
+        vm.assume(_recipient != address(0));
+        vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
+        vm.assume(_recipient != address(coreDepositWallet));
+
+        // Mint tokens to the sender
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
+
+        // Approve the CoreDepositWallet to spend the tokens
+        vm.startPrank(_sender);
+        MockDepositableToken(TOKEN).approve(
+            address(coreDepositWallet),
+            _amount
+        );
+
+        // Expect revert due to SafeMath multiplication overflow
+        vm.expectRevert("SafeMath: multiplication overflow");
+        coreDepositWallet.depositFor(_recipient, _amount);
+        vm.stopPrank();
+    }
+
+    function testDepositFor_revertsOnUint64Overflow(
+        uint256 _amount,
+        address _sender,
+        address _recipient
+    ) public {
+        vm.assume(
+            _amount > type(uint64).max / 100 &&
+                _amount <= type(uint256).max / 100
+        ); // Will cause SafeCast overflow after scaling
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
@@ -656,7 +714,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         address _sender
     ) public {
         vm.assume(_amount > 0);
-        vm.assume(_amount <= type(uint64).max); // Bound amount to fit in uint64 for SafeCast
+        vm.assume(_amount <= type(uint64).max / 100); // Ensure scaled amount fits in uint64
         vm.assume(_sender != address(0));
 
         // Mint tokens to the sender
@@ -698,7 +756,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     function testDepositWithAuth_succeedsWithMaxUint64Amount(
         address _sender
     ) public {
-        uint256 amount = type(uint64).max;
+        uint256 amount = type(uint64).max / 100; // Max amount before scaling overflow
         vm.assume(_sender != address(0));
 
         // Arrange (token is pulled via receiveWithAuthorization)
@@ -731,11 +789,38 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
-    function testDepositWithAuth_revertsOnAmountOverflow(
+    function testDepositWithAuth_revertsOnUint256Overflow(
         uint256 _amount,
         address _sender
     ) public {
-        vm.assume(_amount > type(uint64).max);
+        vm.assume(_amount > type(uint256).max / 100); // Will cause SafeMath multiplication overflow
+        vm.assume(_sender != address(0));
+
+        // Mint tokens to the sender
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
+
+        // Expect revert due to SafeMath multiplication overflow
+        vm.prank(_sender);
+        vm.expectRevert("SafeMath: multiplication overflow");
+        coreDepositWallet.depositWithAuth(
+            _amount,
+            0,
+            1,
+            bytes32("nonce"),
+            0,
+            bytes32("r"),
+            bytes32("s")
+        );
+    }
+
+    function testDepositWithAuth_revertsOnUint64Overflow(
+        uint256 _amount,
+        address _sender
+    ) public {
+        vm.assume(
+            _amount > type(uint64).max / 100 &&
+                _amount <= type(uint256).max / 100
+        ); // Will cause SafeCast overflow after scaling
         vm.assume(_sender != address(0));
 
         // Mint tokens to the sender
@@ -899,9 +984,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         address _sender,
         uint256 _amount
     ) public {
-        // Constrain to valid values that avoid SafeCast revert
+        // Constrain to valid values that avoid scaled amount overflow
         vm.assume(_sender != address(0));
-        vm.assume(_amount > 0 && _amount <= type(uint64).max);
+        vm.assume(_amount > 0 && _amount <= type(uint64).max / 100);
 
         // Arrange
         MockDepositableToken(TOKEN).mint(_sender, _amount);
@@ -977,7 +1062,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             );
             assertEq(uint256(destinationDex), uint256(0), "destinationDex");
             assertEq(uint256(tokenIndex), uint256(0), "tokenIndex");
-            assertEq(uint256(amount64), uint256(_amount), "amount");
+            assertEq(uint256(amount64), uint256(_amount * 100), "amount");
         }
     }
 
@@ -998,5 +1083,6 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             0x3333333333333333333333333333333333333333,
             "coreWriterAddress"
         );
+        assertEq(uint256(c.scalingFactor), uint256(100), "scalingFactor");
     }
 }
