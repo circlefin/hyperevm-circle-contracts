@@ -26,6 +26,7 @@ import {TestUtils} from "./TestUtils.sol";
 import {DeployScriptTestUtils} from "./DeployScriptTestUtils.s.sol";
 import {MockCoreDepositWalletV2} from "./mocks/MockCoreDepositWalletV2.sol";
 import {MockCoreWriter} from "./mocks/MockCoreWriter.sol";
+import {MockCoreUserExistsPrecompile} from "./mocks/MockCoreUserExistsPrecompile.sol";
 import {ICoreWriter} from "../src/interfaces/ICoreWriter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -37,18 +38,45 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     event SendRawAction(address indexed user, bytes data);
 
+    event SendAsset(address indexed coreRecipient, uint64 coreAmount);
+
+    event NewCoreAccountFeeUpdated(uint64 previousFee, uint64 newFee);
+
+    event NewCoreAccountFeeApplied(
+        address indexed coreRecipient,
+        uint64 newCoreAccountFee,
+        uint256 evmDepositAmount,
+        uint64 coreSentAmount
+    );
+
     address public newTokenSystemAddress = address(11);
+    address private constant CORE_USER_EXISTS_ADDRESS =
+        0x0000000000000000000000000000000000000810;
+    address private constant CORE_WRITER_ADDRESS =
+        0x3333333333333333333333333333333333333333;
+
+    uint64 private constant DEFAULT_NEW_CORE_ACCOUNT_FEE = 100000000; // 1 USDC (8 decimals)
+    uint256 private constant CORE_SCALING_FACTOR = 100; // 6 decimals -> 8 decimals
 
     function setUp() public {
         _deployCreate2Factory();
         _deployMockCoreWriter();
         _deployCoreDepositWallet();
+        _deployMockCoreUserExistsPrecompile();
     }
 
     function _deployMockCoreWriter() internal {
         // Deploy MockCoreWriter at the hardcoded CoreWriter address
         address coreWriterAddress = 0x3333333333333333333333333333333333333333;
         vm.etch(coreWriterAddress, type(MockCoreWriter).runtimeCode);
+    }
+
+    function _deployMockCoreUserExistsPrecompile() internal {
+        // Deploy a simple contract that always returns true (user exists)
+        vm.etch(
+            CORE_USER_EXISTS_ADDRESS,
+            type(MockCoreUserExistsPrecompile).runtimeCode
+        );
     }
 
     // Helper functions
@@ -75,6 +103,43 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             data[4 + i] = encodedAction[i];
         }
         return data;
+    }
+
+    function _setupTokenMintAndApprove(
+        address account,
+        uint256 amount
+    ) internal {
+        // Mint tokens to the account
+        MockDepositableToken(TOKEN).mint(account, amount);
+        vm.prank(account);
+        MockDepositableToken(TOKEN).approve(address(coreDepositWallet), amount);
+    }
+
+    function _mockCoreUserExists(address user, bool exists) internal {
+        // Mock the CoreUserExistsPrecompile contract to return the desired exists value
+        vm.mockCall(
+            CORE_USER_EXISTS_ADDRESS,
+            abi.encode(user),
+            abi.encode(exists)
+        );
+    }
+
+    // Helper to bound deposit and fee together with valid relationship
+    function _boundDepositAndFee(
+        uint256 evmAmountIn,
+        uint64 feeIn
+    ) internal pure returns (uint256 evmAmount, uint64 fee) {
+        evmAmount = bound(
+            evmAmountIn,
+            1,
+            type(uint64).max / CORE_SCALING_FACTOR
+        );
+        uint64 feeMax = uint64(evmAmount * CORE_SCALING_FACTOR - 1);
+        fee = uint64(bound(uint256(feeIn), 1, feeMax));
+    }
+
+    function _scaleToCore(uint256 evmAmount) internal pure returns (uint64) {
+        return uint64(evmAmount * CORE_SCALING_FACTOR);
     }
 
     // Proxy tests
@@ -318,16 +383,11 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_amount > 0);
         vm.assume(_amount <= type(uint64).max / 100); // Ensure scaled amount fits in uint64
         vm.assume(_sender != address(0));
+        uint64 coreScaledAmount = uint64(_amount * 100); // scaled core amount
 
-        // Mint tokens to the sender
-        MockDepositableToken(TOKEN).mint(_sender, _amount);
-
-        // Approve the CoreDepositWallet to spend the tokens
+        // Setup tokens for sender
+        _setupTokenMintAndApprove(_sender, _amount);
         vm.startPrank(_sender);
-        MockDepositableToken(TOKEN).approve(
-            address(coreDepositWallet),
-            _amount
-        );
 
         // Check that the Transfer event was emitted
         vm.expectEmit(true, true, true, true);
@@ -343,6 +403,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
 
+        // Expect SendAsset event with scaled amount
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(_sender, coreScaledAmount);
+
         // Deposit tokens into the CoreDepositWallet
         coreDepositWallet.deposit(_amount);
         vm.stopPrank();
@@ -357,11 +421,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     function testDeposit_succeedsWithMaxUint64Amount(address _sender) public {
         uint256 amount = type(uint64).max / 100; // Max amount before scaling overflow
         vm.assume(_sender != address(0));
-
+        uint64 coreScaledAmount = uint64(amount * 100); // scaled core amount
         // Arrange
-        MockDepositableToken(TOKEN).mint(_sender, amount);
+        _setupTokenMintAndApprove(_sender, amount);
         vm.startPrank(_sender);
-        MockDepositableToken(TOKEN).approve(address(coreDepositWallet), amount);
 
         // Expect Transfer and CoreWriter action
         vm.expectEmit(true, true, true, true);
@@ -370,6 +433,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         bytes memory expectedData = _buildCoreWriterAction(_sender, amount);
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
+
+        // Expect SendAsset event with scaled amount
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(_sender, coreScaledAmount);
 
         // Act
         coreDepositWallet.deposit(amount);
@@ -395,7 +462,6 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Mint tokens to the sender
         MockDepositableToken(TOKEN).mint(_sender, _amount);
-
         // Approve the CoreDepositWallet to spend the tokens
         vm.startPrank(_sender);
         MockDepositableToken(TOKEN).approve(
@@ -481,15 +547,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
         vm.assume(_recipient != address(coreDepositWallet));
 
-        // Mint tokens to the sender
-        MockDepositableToken(TOKEN).mint(_sender, _amount);
-
-        // Approve the CoreDepositWallet to spend the tokens
+        // Setup tokens for sender
+        _setupTokenMintAndApprove(_sender, _amount);
         vm.startPrank(_sender);
-        MockDepositableToken(TOKEN).approve(
-            address(coreDepositWallet),
-            _amount
-        );
 
         // Check that the Transfer event was emitted
         vm.expectEmit(true, true, true, true);
@@ -503,6 +563,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
+
+        // Expect SendAsset event with scaled amount
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(_recipient, uint64(_amount * 100));
 
         // Deposit tokens into the CoreDepositWallet
         coreDepositWallet.depositFor(_recipient, _amount);
@@ -526,9 +590,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_recipient != address(coreDepositWallet));
 
         // Arrange
-        MockDepositableToken(TOKEN).mint(_sender, amount);
+        _setupTokenMintAndApprove(_sender, amount);
         vm.startPrank(_sender);
-        MockDepositableToken(TOKEN).approve(address(coreDepositWallet), amount);
 
         // Expect Transfer and CoreWriter action
         vm.expectEmit(true, true, true, true);
@@ -724,6 +787,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_amount > 0);
         vm.assume(_amount <= type(uint64).max / 100); // Ensure scaled amount fits in uint64
         vm.assume(_sender != address(0));
+        uint64 coreScaledAmount = uint64(_amount * 100); // scaled core amount
 
         // Mint tokens to the sender
         MockDepositableToken(TOKEN).mint(_sender, _amount);
@@ -741,6 +805,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
+
+        // Expect SendAsset event with scaled amount
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(_sender, coreScaledAmount);
 
         // Deposit tokens into the CoreDepositWallet
         vm.prank(_sender);
@@ -766,7 +834,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     ) public {
         uint256 amount = type(uint64).max / 100; // Max amount before scaling overflow
         vm.assume(_sender != address(0));
-
+        uint64 coreScaledAmount = uint64(amount * 100); // scaled core amount
         // Arrange (token is pulled via receiveWithAuthorization)
         MockDepositableToken(TOKEN).mint(_sender, amount);
 
@@ -777,6 +845,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         bytes memory expectedData = _buildCoreWriterAction(_sender, amount);
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
+
+        // Expect SendAsset event with scaled amount
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(_sender, coreScaledAmount);
 
         // Act
         vm.prank(_sender);
@@ -1078,23 +1150,883 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         }
     }
 
-    function testGetSendAssetConstants_returnsExpectedValues() public view {
-        CoreDepositWallet.SendAssetConstants memory c = coreDepositWallet
-            .getSendAssetConstants();
-        assertEq(uint256(c.actionVersion), uint256(0x01), "actionVersion");
-        assertEq(uint256(c.sendAssetActionId), uint256(0x00000D), "actionId");
-        assertEq(uint256(c.tokenIndex), uint256(0), "tokenIndex");
+    function testGetCoreProtocolConstants_returnsExpectedValues() public view {
+        CoreDepositWallet.CoreProtocolConstants memory c = coreDepositWallet
+            .getCoreProtocolConstants();
         assertEq(
-            uint256(c.sourceSpotDex),
-            uint256(type(uint32).max),
-            "sourceSpotDex"
+            uint256(c.coreWriterActionVersion),
+            uint256(0x01),
+            "coreWriterActionVersion"
         );
-        assertEq(uint256(c.destinationPerpDex), uint256(0), "destPerpDex");
+        assertEq(
+            uint256(c.coreWriterSendAssetActionId),
+            uint256(0x00000D),
+            "coreWriterSendAssetActionId"
+        );
+        assertEq(
+            uint256(c.coreWriterTokenIndex),
+            uint256(0),
+            "coreWriterTokenIndex"
+        );
+        assertEq(
+            uint256(c.coreWriterSourceSpotDex),
+            uint256(type(uint32).max),
+            "coreWriterSourceSpotDex"
+        );
+        assertEq(
+            uint256(c.coreWriterDestinationPerpDex),
+            uint256(0),
+            "coreWriterDestinationPerpDex"
+        );
         assertEq(
             c.coreWriterAddress,
             0x3333333333333333333333333333333333333333,
             "coreWriterAddress"
         );
-        assertEq(uint256(c.scalingFactor), uint256(100), "scalingFactor");
+        assertEq(
+            c.coreUserExistsAddress,
+            0x0000000000000000000000000000000000000810,
+            "coreUserExistsAddress"
+        );
+        assertEq(
+            uint256(c.coreScalingFactor),
+            uint256(100),
+            "coreScalingFactor"
+        );
+    }
+
+    // ============ New Account Fee Tests ============
+
+    function testNewCoreAccountFee_defaultIsSetCorrectly() public view {
+        assertEq(
+            uint256(coreDepositWallet.newCoreAccountFee()),
+            uint256(DEFAULT_NEW_CORE_ACCOUNT_FEE),
+            "Default new account fee should be 1 USDC"
+        );
+    }
+
+    function testUpdateNewCoreAccountFee_onlyOwner(uint64 newCoreFee) public {
+        // Non-owner cannot update
+        vm.prank(address(0x999));
+        vm.expectRevert("Ownable: caller is not the owner");
+        coreDepositWallet.updateNewCoreAccountFee(newCoreFee);
+
+        // Owner can update
+        vm.expectEmit(true, true, true, true);
+        emit NewCoreAccountFeeUpdated(DEFAULT_NEW_CORE_ACCOUNT_FEE, newCoreFee);
+
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(newCoreFee);
+
+        assertEq(
+            uint256(coreDepositWallet.newCoreAccountFee()),
+            uint256(newCoreFee),
+            "Fee should be updated"
+        );
+    }
+
+    function testDepositFor_existingUser_noFeeApplied(
+        uint256 evmDepositAmount
+    ) public {
+        // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
+        evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        uint64 scaledCoreAmount = uint64(evmDepositAmount * 100);
+        address recipient = address(0x123);
+
+        // Mock user exists (returns true)
+        _mockCoreUserExists(recipient, true);
+
+        // Mock token operations
+        _setupTokenMintAndApprove(address(this), evmDepositAmount);
+
+        // Expect full amount to be sent (no fee deduction)
+        bytes memory expectedPayload = abi.encode(
+            recipient,
+            address(0),
+            type(uint32).max,
+            uint32(0),
+            uint64(0),
+            scaledCoreAmount
+        );
+        bytes memory expectedData = abi.encodePacked(
+            uint8(0x01),
+            uint24(0x00000D),
+            expectedPayload
+        );
+
+        vm.expectCall(
+            CORE_WRITER_ADDRESS,
+            abi.encodeWithSelector(
+                ICoreWriter.sendRawAction.selector,
+                expectedData
+            )
+        );
+
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            evmDepositAmount
+        );
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(recipient, scaledCoreAmount); // scaled core amount without any fee deduction
+
+        coreDepositWallet.depositFor(recipient, evmDepositAmount);
+    }
+
+    function testDepositFor_newUser_feeApplied(
+        uint256 evmDepositAmount,
+        uint64 coreNewAccountFee
+    ) public {
+        (uint256 evmAmount, uint64 fee) = _boundDepositAndFee(
+            evmDepositAmount,
+            coreNewAccountFee
+        );
+        uint64 coreScaledAmount = _scaleToCore(evmAmount);
+        uint64 coreNetScaledAmount = uint64(uint256(coreScaledAmount) - fee);
+        address recipient = address(0x123);
+
+        // Set up fee (core units)
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(fee);
+
+        // Mock user does NOT exist (returns false)
+        _mockCoreUserExists(recipient, false);
+
+        // Mock token operations
+        _setupTokenMintAndApprove(address(this), evmAmount);
+
+        // Expect reduced core amount to be sent (after fee deduction in core units)
+        bytes memory expectedPayload = abi.encode(
+            recipient,
+            address(0),
+            type(uint32).max,
+            uint32(0),
+            uint64(0),
+            coreNetScaledAmount
+        );
+        bytes memory expectedData = abi.encodePacked(
+            uint8(0x01),
+            uint24(0x00000D),
+            expectedPayload
+        );
+
+        vm.expectCall(
+            CORE_WRITER_ADDRESS,
+            abi.encodeWithSelector(
+                ICoreWriter.sendRawAction.selector,
+                expectedData
+            )
+        );
+
+        // Expect Transfer event with full deposited amount (emitted before fee deduction)
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            evmAmount
+        );
+
+        // Should emit NewCoreAccountFeeApplied with core units
+        vm.expectEmit(true, true, true, true);
+        emit NewCoreAccountFeeApplied(
+            recipient,
+            fee,
+            evmAmount,
+            coreNetScaledAmount
+        );
+
+        // Expect SendAsset event with scaled net amount (after fee deduction)
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(recipient, coreNetScaledAmount);
+
+        coreDepositWallet.depositFor(recipient, evmAmount);
+    }
+
+    function testDepositFor_newUser_insufficientAmount_reverts(
+        uint256 evmDepositAmount,
+        uint64 coreFee
+    ) public {
+        // Choose fee (core units) large enough that some deposit amounts are <= fee/100
+        coreFee = uint64(bound(uint256(coreFee), 100, type(uint64).max));
+        // Constrain: 1 <= depositAmount <= floor(coreFee/100)
+        evmDepositAmount = bound(evmDepositAmount, 1, coreFee / 100);
+        address recipient = address(0x123);
+
+        // Set up fee
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(coreFee);
+
+        // Mock user does NOT exist (returns false)
+        _mockCoreUserExists(recipient, false);
+
+        // Mock token operations
+        _setupTokenMintAndApprove(address(this), evmDepositAmount);
+
+        // Should revert with insufficient amount (100*evmDeposit <= coreFee)
+        vm.expectRevert("Amount must exceed new account fee");
+        coreDepositWallet.depositFor(recipient, evmDepositAmount);
+    }
+
+    function testDepositFor_newUser_exactFeeAmount_reverts(
+        uint64 coreFee
+    ) public {
+        // Bound fee (core units) so that depositAmount = coreFee/100 is valid (>0)
+        coreFee = uint64(bound(uint256(coreFee), 100, type(uint64).max));
+        address recipient = address(0x123);
+
+        // Set up fee
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(coreFee);
+
+        // Mock user does NOT exist (returns false)
+        _mockCoreUserExists(recipient, false);
+
+        // Mock token operations
+        uint256 evmDepositAmount = coreFee / 100;
+        _setupTokenMintAndApprove(address(this), evmDepositAmount);
+
+        // Should revert when 100*evmDepositAmount <= coreFee
+        vm.expectRevert("Amount must exceed new account fee");
+        coreDepositWallet.depositFor(recipient, evmDepositAmount);
+    }
+
+    function testDepositFor_newUser_zeroFee_noFeeLogic(
+        uint256 evmDepositAmount
+    ) public {
+        // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
+        evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        uint64 coreScaledAmount = uint64(evmDepositAmount * 100); // scaled core amount
+        uint64 coreFee = 0; // 0 USDC (core token units)
+        address recipient = address(0x123);
+
+        // Set fee to 0 for this test
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(coreFee);
+
+        // Mock user does NOT exist (returns false)
+        _mockCoreUserExists(recipient, false);
+
+        // Mock token operations
+        _setupTokenMintAndApprove(address(this), evmDepositAmount);
+
+        // Expect full amount to be sent (no fee when fee is 0)
+        bytes memory expectedPayload = abi.encode(
+            recipient,
+            address(0),
+            type(uint32).max,
+            uint32(0),
+            uint64(0),
+            coreScaledAmount
+        );
+        bytes memory expectedData = abi.encodePacked(
+            uint8(0x01),
+            uint24(0x00000D),
+            expectedPayload
+        );
+
+        vm.expectCall(
+            CORE_WRITER_ADDRESS,
+            abi.encodeWithSelector(
+                ICoreWriter.sendRawAction.selector,
+                expectedData
+            )
+        );
+
+        // Should emit Transfer and SendAsset without any fee deduction; should NOT emit NewCoreAccountFeeApplied when fee is 0
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            evmDepositAmount
+        );
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(recipient, coreScaledAmount);
+
+        coreDepositWallet.depositFor(recipient, evmDepositAmount);
+    }
+
+    function testDeposit_existingUser_noFeeApplied(
+        address _sender,
+        uint256 evmDepositAmount
+    ) public {
+        // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
+        evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        uint64 coreScaledAmount = uint64(evmDepositAmount * 100);
+        vm.assume(_sender != address(0));
+
+        // Mock user exists (returns true)
+        _mockCoreUserExists(_sender, true);
+
+        // Setup tokens for sender
+        _setupTokenMintAndApprove(_sender, evmDepositAmount);
+        vm.startPrank(_sender);
+
+        // Expect full amount to be sent (no fee deduction)
+        bytes memory expectedData = _buildCoreWriterAction(
+            _sender,
+            evmDepositAmount
+        );
+
+        vm.expectCall(
+            CORE_WRITER_ADDRESS,
+            abi.encodeWithSelector(
+                ICoreWriter.sendRawAction.selector,
+                expectedData
+            )
+        );
+
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            evmDepositAmount
+        );
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(_sender, coreScaledAmount);
+
+        coreDepositWallet.deposit(evmDepositAmount);
+        vm.stopPrank();
+    }
+
+    function testDeposit_newUser_feeApplied(
+        address _sender,
+        uint256 evmDepositAmount,
+        uint64 coreFee
+    ) public {
+        vm.assume(_sender != address(0));
+
+        // Use helper to bound deposit and fee with valid relationship
+        (uint256 evmAmount, uint64 fee) = _boundDepositAndFee(
+            evmDepositAmount,
+            coreFee
+        );
+        uint64 coreScaledAmount = _scaleToCore(evmAmount);
+        uint64 coreNetScaledAmount = uint64(uint256(coreScaledAmount) - fee);
+
+        // Set up fee
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(fee);
+
+        // Mock user does NOT exist (returns false)
+        _mockCoreUserExists(_sender, false);
+
+        // Setup tokens for sender
+        _setupTokenMintAndApprove(_sender, evmAmount);
+        vm.startPrank(_sender);
+
+        // Expect reduced core amount to be sent (after fee deduction)
+        bytes memory expectedPayload = abi.encode(
+            _sender,
+            address(0),
+            type(uint32).max,
+            uint32(0),
+            uint64(0),
+            coreNetScaledAmount
+        );
+        bytes memory expectedData = abi.encodePacked(
+            uint8(0x01),
+            uint24(0x00000D),
+            expectedPayload
+        );
+        vm.expectCall(
+            CORE_WRITER_ADDRESS,
+            abi.encodeWithSelector(
+                ICoreWriter.sendRawAction.selector,
+                expectedData
+            )
+        );
+
+        // Expect Transfer (full amount), fee applied event, and SendAsset (net)
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            evmAmount
+        );
+
+        vm.expectEmit(true, true, true, true);
+        emit NewCoreAccountFeeApplied(
+            _sender,
+            fee,
+            evmAmount,
+            coreNetScaledAmount
+        );
+
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(_sender, coreNetScaledAmount);
+
+        coreDepositWallet.deposit(evmAmount);
+        vm.stopPrank();
+    }
+
+    function testDeposit_newUser_insufficientAmount_reverts(
+        address _sender,
+        uint256 evmDepositAmount,
+        uint64 coreFee
+    ) public {
+        vm.assume(_sender != address(0));
+        // Bound fee (core units) so that there exist deposits with 100*deposit <= fee
+        coreFee = uint64(bound(uint256(coreFee), 100, type(uint64).max));
+        // Constrain: 1 <= depositAmount <= floor(coreFee/100)
+        evmDepositAmount = bound(evmDepositAmount, 1, coreFee / 100);
+
+        // Set up fee
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(coreFee);
+
+        // Mock user does NOT exist (returns false)
+        _mockCoreUserExists(_sender, false);
+
+        // Setup tokens for sender
+        _setupTokenMintAndApprove(_sender, evmDepositAmount);
+        vm.startPrank(_sender);
+
+        // Should revert with insufficient amount
+        vm.expectRevert("Amount must exceed new account fee");
+        coreDepositWallet.deposit(evmDepositAmount);
+        vm.stopPrank();
+    }
+
+    function testDeposit_newUser_exactFeeAmount_reverts(
+        address _sender,
+        uint64 coreFee
+    ) public {
+        // Bound fee (core units) so that depositAmount = coreFee/100 is valid
+        coreFee = uint64(bound(uint256(coreFee), 100, type(uint64).max));
+        vm.assume(_sender != address(0));
+
+        // Set up fee
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(coreFee);
+
+        // Mock user does NOT exist (returns false)
+        _mockCoreUserExists(_sender, false);
+
+        // Setup tokens for sender
+        uint256 evmDepositAmount = coreFee / 100;
+        _setupTokenMintAndApprove(_sender, evmDepositAmount);
+        vm.startPrank(_sender);
+
+        // Should revert when amount equals fee (no net amount)
+        vm.expectRevert("Amount must exceed new account fee");
+        coreDepositWallet.deposit(evmDepositAmount);
+        vm.stopPrank();
+    }
+
+    function testDeposit_newUser_zeroFee_noFeeLogic(
+        address _sender,
+        uint256 evmDepositAmount
+    ) public {
+        // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
+        evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        uint64 coreScaledAmount = uint64(evmDepositAmount * 100);
+        uint64 coreFee = 0; // 0 USDC (core token units)
+        vm.assume(_sender != address(0));
+
+        // Set fee to 0 for this test
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(coreFee);
+
+        // Mock user does NOT exist (returns false)
+        _mockCoreUserExists(_sender, false);
+
+        // Setup tokens for sender
+        _setupTokenMintAndApprove(_sender, evmDepositAmount);
+        vm.startPrank(_sender);
+
+        // Expect full amount to be sent (no fee)
+        bytes memory expectedData = _buildCoreWriterAction(
+            _sender,
+            evmDepositAmount
+        );
+        vm.expectCall(
+            CORE_WRITER_ADDRESS,
+            abi.encodeWithSelector(
+                ICoreWriter.sendRawAction.selector,
+                expectedData
+            )
+        );
+
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            evmDepositAmount
+        );
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(_sender, coreScaledAmount);
+
+        coreDepositWallet.deposit(evmDepositAmount);
+        vm.stopPrank();
+    }
+
+    function testDepositWithAuth_newUser_feeApplied(
+        address _sender,
+        uint256 evmDepositAmount,
+        uint64 coreFee
+    ) public {
+        vm.assume(_sender != address(0));
+
+        // Use helper to bound deposit and fee with valid relationship
+        (uint256 evmAmount, uint64 fee) = _boundDepositAndFee(
+            evmDepositAmount,
+            coreFee
+        );
+        uint64 coreScaledNetAmount = uint64(
+            uint256(_scaleToCore(evmAmount)) - fee
+        ); // scaled core net amount
+
+        // Set up fee
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(fee);
+
+        // Mock user does NOT exist (returns false)
+        _mockCoreUserExists(_sender, false);
+
+        // Mock token operations
+        MockDepositableToken(TOKEN).mint(_sender, evmAmount);
+
+        // Mock receiveWithAuthorization
+        vm.mockCall(
+            TOKEN,
+            abi.encodeWithSelector(
+                MockEIP3009Token.receiveWithAuthorization.selector
+            ),
+            abi.encode()
+        );
+
+        // Expect net core amount to be sent
+        bytes memory expectedPayload = abi.encode(
+            _sender,
+            address(0),
+            type(uint32).max,
+            uint32(0),
+            uint64(0),
+            coreScaledNetAmount
+        );
+        bytes memory expectedData = abi.encodePacked(
+            uint8(0x01),
+            uint24(0x00000D),
+            expectedPayload
+        );
+
+        vm.expectCall(
+            CORE_WRITER_ADDRESS,
+            abi.encodeWithSelector(
+                ICoreWriter.sendRawAction.selector,
+                expectedData
+            )
+        );
+
+        // Expect Transfer event with full deposited amount (emitted before fee logic)
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            evmAmount
+        );
+        // Should emit NewCoreAccountFeeApplied with core units
+        vm.expectEmit(true, true, true, true);
+        emit NewCoreAccountFeeApplied(
+            _sender,
+            fee,
+            evmAmount,
+            coreScaledNetAmount
+        );
+        // Expect SendAsset event with scaled net amount (after fee)
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(_sender, coreScaledNetAmount);
+
+        vm.prank(_sender);
+        coreDepositWallet.depositWithAuth(
+            evmAmount,
+            block.timestamp - 1,
+            block.timestamp + 1000,
+            bytes32(uint256(1)),
+            27,
+            bytes32(uint256(2)),
+            bytes32(uint256(3))
+        );
+    }
+
+    function testDepositWithAuth_existingUser_noFeeApplied(
+        address _sender,
+        uint256 evmDepositAmount
+    ) public {
+        // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
+        evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        uint64 coreScaledAmount = uint64(evmDepositAmount * 100); // scaled core amount
+        vm.assume(_sender != address(0));
+
+        // Existing user
+        _mockCoreUserExists(_sender, true);
+
+        // Mint tokens to sender and mock receiveWithAuthorization
+        MockDepositableToken(TOKEN).mint(_sender, evmDepositAmount);
+        vm.mockCall(
+            TOKEN,
+            abi.encodeWithSelector(
+                MockEIP3009Token.receiveWithAuthorization.selector
+            ),
+            abi.encode()
+        );
+
+        // Expect CoreWriter call with full amount
+        bytes memory expectedData = _buildCoreWriterAction(
+            _sender,
+            evmDepositAmount
+        );
+        vm.expectCall(
+            CORE_WRITER_ADDRESS,
+            abi.encodeWithSelector(
+                ICoreWriter.sendRawAction.selector,
+                expectedData
+            )
+        );
+
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            evmDepositAmount
+        );
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(_sender, coreScaledAmount);
+
+        vm.prank(_sender);
+        coreDepositWallet.depositWithAuth(
+            evmDepositAmount,
+            block.timestamp - 1,
+            block.timestamp + 1000,
+            bytes32(uint256(1)),
+            27,
+            bytes32(uint256(2)),
+            bytes32(uint256(3))
+        );
+    }
+
+    function testDepositWithAuth_newUser_insufficientAmount_reverts(
+        address _sender,
+        uint256 evmDepositAmount,
+        uint64 coreFee
+    ) public {
+        vm.assume(_sender != address(0));
+        // Bound fee (core units) so that there exist deposits with 100*deposit <= fee
+        coreFee = uint64(bound(uint256(coreFee), 100, type(uint64).max));
+        evmDepositAmount = bound(evmDepositAmount, 1, coreFee / 100);
+
+        // Set fee and mark as new user
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(coreFee);
+        _mockCoreUserExists(_sender, false);
+
+        // Mint and mock auth
+        MockDepositableToken(TOKEN).mint(_sender, evmDepositAmount);
+        vm.mockCall(
+            TOKEN,
+            abi.encodeWithSelector(
+                MockEIP3009Token.receiveWithAuthorization.selector
+            ),
+            abi.encode()
+        );
+
+        vm.prank(_sender);
+        vm.expectRevert("Amount must exceed new account fee");
+
+        coreDepositWallet.depositWithAuth(
+            evmDepositAmount,
+            block.timestamp - 1,
+            block.timestamp + 1000,
+            bytes32(uint256(1)),
+            27,
+            bytes32(uint256(2)),
+            bytes32(uint256(3))
+        );
+    }
+
+    function testDepositWithAuth_newUser_exactFeeAmount_reverts(
+        address _sender,
+        uint64 coreFee
+    ) public {
+        // Bound fee (core units)
+        coreFee = uint64(bound(uint256(coreFee), 100, type(uint64).max));
+        uint256 evmDepositAmount = coreFee / 100;
+        vm.assume(_sender != address(0));
+
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(coreFee);
+        _mockCoreUserExists(_sender, false);
+
+        MockDepositableToken(TOKEN).mint(_sender, evmDepositAmount);
+        vm.mockCall(
+            TOKEN,
+            abi.encodeWithSelector(
+                MockEIP3009Token.receiveWithAuthorization.selector
+            ),
+            abi.encode()
+        );
+
+        vm.prank(_sender);
+        vm.expectRevert("Amount must exceed new account fee");
+        coreDepositWallet.depositWithAuth(
+            evmDepositAmount,
+            block.timestamp - 1,
+            block.timestamp + 1000,
+            bytes32(uint256(1)),
+            27,
+            bytes32(uint256(2)),
+            bytes32(uint256(3))
+        );
+    }
+
+    function testDepositWithAuth_newUser_zeroFee_noFeeLogic(
+        address _sender,
+        uint256 evmDepositAmount
+    ) public {
+        vm.assume(_sender != address(0));
+        evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        uint64 coreScaledAmount = uint64(evmDepositAmount * 100);
+
+        // Set fee to 0 and mark as new user
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(uint64(0));
+        _mockCoreUserExists(_sender, false);
+
+        // Mint and mock auth
+        MockDepositableToken(TOKEN).mint(_sender, evmDepositAmount);
+        vm.mockCall(
+            TOKEN,
+            abi.encodeWithSelector(
+                MockEIP3009Token.receiveWithAuthorization.selector
+            ),
+            abi.encode()
+        );
+
+        // Expect full amount
+        bytes memory expectedData = _buildCoreWriterAction(
+            _sender,
+            evmDepositAmount
+        );
+        vm.expectCall(
+            CORE_WRITER_ADDRESS,
+            abi.encodeWithSelector(
+                ICoreWriter.sendRawAction.selector,
+                expectedData
+            )
+        );
+
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            evmDepositAmount
+        );
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(_sender, coreScaledAmount);
+
+        vm.prank(_sender);
+        coreDepositWallet.depositWithAuth(
+            evmDepositAmount,
+            block.timestamp - 1,
+            block.timestamp + 1000,
+            bytes32(uint256(1)),
+            27,
+            bytes32(uint256(2)),
+            bytes32(uint256(3))
+        );
+    }
+
+    function testPrecompileCall_failure_reverts(uint256 depositAmount) public {
+        address recipient = address(0x123);
+        // Bound: 1 <= depositAmount <= type(uint64).max / 100 to avoid scaling overflow
+        depositAmount = bound(depositAmount, 1, type(uint64).max / 100);
+
+        // Mock precompile call failure
+        vm.mockCallRevert(
+            CORE_USER_EXISTS_ADDRESS,
+            abi.encode(recipient),
+            "Precompile error"
+        );
+
+        // Mock token operations
+        _setupTokenMintAndApprove(address(this), depositAmount);
+
+        // Should revert with precompile error
+        vm.expectRevert("Core user exists precompile call failed");
+        coreDepositWallet.depositFor(recipient, depositAmount);
+    }
+
+    function testUpdateNewCoreAccountFee_multipleTimes() public {
+        uint64 fee1 = 150000000; // 1.5 USDC (8 decimals)
+        uint64 fee2 = 200000000; // 2 USDC (8 decimals)
+        uint64 fee3 = 0;
+
+        // First update
+        vm.expectEmit(true, true, true, true);
+        emit NewCoreAccountFeeUpdated(DEFAULT_NEW_CORE_ACCOUNT_FEE, fee1);
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(fee1);
+        assertEq(uint256(coreDepositWallet.newCoreAccountFee()), uint256(fee1));
+
+        // Second update (previous fee is now fee1)
+        vm.expectEmit(true, true, true, true);
+        emit NewCoreAccountFeeUpdated(fee1, fee2);
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(fee2);
+        assertEq(uint256(coreDepositWallet.newCoreAccountFee()), uint256(fee2));
+
+        // Third update (previous fee is now fee2, not 0)
+        vm.expectEmit(true, true, true, true);
+        emit NewCoreAccountFeeUpdated(fee2, fee3);
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(fee3);
+        assertEq(uint256(coreDepositWallet.newCoreAccountFee()), uint256(fee3));
+    }
+
+    function testDeposit_newUser_minimalViableAmount(uint64 coreFee) public {
+        // Bound fee (core units)
+        uint256 maxDeposit = type(uint64).max / 100;
+        coreFee = uint64(bound(coreFee, 1, maxDeposit * 100 - 1));
+        // Choose minimal deposit so that net core amount >= 1 and scaled fits in uint64
+        uint256 depositAmount = (coreFee / 100) + 1;
+        uint64 coreScaledNetAmount = uint64(
+            uint256(uint64(depositAmount * 100)) - coreFee
+        );
+        address recipient = address(0x123);
+
+        // Set up fee
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateNewCoreAccountFee(coreFee);
+
+        // Mock user does NOT exist
+        vm.mockCall(
+            CORE_USER_EXISTS_ADDRESS,
+            abi.encode(recipient),
+            abi.encode(false)
+        );
+
+        // Mock token operations
+        _setupTokenMintAndApprove(address(this), depositAmount);
+
+        // Expect Transfer (full amount) then NewCoreAccountFeeApplied with minimal net amount
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(coreDepositWallet),
+            TOKEN_SYSTEM_ADDRESS,
+            depositAmount
+        );
+        vm.expectEmit(true, true, true, true);
+        emit NewCoreAccountFeeApplied(
+            recipient,
+            coreFee,
+            depositAmount,
+            coreScaledNetAmount
+        );
+
+        // Expect SendAsset event with scaled net amount (after fee)
+        vm.expectEmit(true, true, true, true);
+        emit SendAsset(recipient, coreScaledNetAmount); // scaled core net amount
+        coreDepositWallet.depositFor(recipient, depositAmount);
     }
 }

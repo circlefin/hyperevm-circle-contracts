@@ -30,20 +30,23 @@ import {SafeMath} from "@openzeppelin/contracts/math/SafeMath.sol";
 
 /**
  * @title CoreDepositWallet
- * @notice Contract for managing token deposits and transfers between HyperEVM and HyperCore.
+ * @notice Contract for managing token deposits and transfers between HyperEVM and HyperCore. This contract is specific to 6 decimals (HyperEVM) tokens that are scaled to 8 decimals (HyperCore).
  */
 contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializable {
     using SafeCast for uint256;
     using SafeMath for uint256;
+    using SafeMath for uint64;
 
     // ============ Constants ============
-    uint8 private constant ACTION_VERSION = 0x01;
-    uint24 private constant SEND_ASSET_ACTION_ID = 0x00000D;
-    uint64 private constant TOKEN_INDEX = 0x0000000000000000;
-    uint32 private constant SOURCE_SPOT_DEX = type(uint32).max;
-    uint32 private constant DESTINATION_PERP_DEX = 0x00000000;
+    uint8 private constant CORE_WRITER_ACTION_VERSION = 0x01;
+    uint24 private constant CORE_WRITER_SEND_ASSET_ACTION_ID = 0x00000D;
+    uint64 private constant CORE_WRITER_TOKEN_INDEX = 0x0000000000000000;
+    uint32 private constant CORE_WRITER_SOURCE_SPOT_DEX = type(uint32).max;
+    uint32 private constant CORE_WRITER_DESTINATION_PERP_DEX = 0x00000000;
+    uint256 private constant CORE_SCALING_FACTOR = 100; // 6 decimals -> 8 decimals (10^(8-6))
     address private constant CORE_WRITER_ADDRESS = 0x3333333333333333333333333333333333333333;
-    uint256 private constant SCALING_FACTOR = 100; // 6 decimals -> 8 decimals (10^(8-6))
+    address private constant CORE_USER_EXISTS_ADDRESS = 0x0000000000000000000000000000000000000810;
+    uint64 private constant DEFAULT_NEW_CORE_ACCOUNT_FEE = 100000000; // 1 USDC (core token units, 8 decimals)
 
     // ============ Structs ============
     struct CoreDepositWalletRoles {
@@ -53,16 +56,24 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     }
 
     /**
-     * @notice Read-only view of constants used to encode the CoreWriter sendAsset action
+     * @notice Read-only view of the HyperCore protocol constants
      */
-    struct SendAssetConstants {
-        uint8 actionVersion;
-        uint24 sendAssetActionId;
-        uint64 tokenIndex;
-        uint32 sourceSpotDex;
-        uint32 destinationPerpDex;
+    struct CoreProtocolConstants {
+        uint8 coreWriterActionVersion;
+        uint24 coreWriterSendAssetActionId;
+        uint64 coreWriterTokenIndex;
+        uint32 coreWriterSourceSpotDex;
+        uint32 coreWriterDestinationPerpDex;
         address coreWriterAddress;
-        uint256 scalingFactor;
+        address coreUserExistsAddress;
+        uint256 coreScalingFactor;
+    }
+
+    /**
+     * @notice Read-only view of the HyperCore user exists precompile return value
+     */
+    struct CoreUserExists {
+        bool exists;
     }
 
     // ============ Events ============
@@ -82,6 +93,31 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      */
     event Withdraw(address indexed to, uint256 value);
 
+    /**
+     * @notice Emitted when the newCoreAccountFee is updated
+     * @param previousFee Previous fee in core token units (8 decimals)
+     * @param newFee New fee in core token units (8 decimals)
+     */
+    event NewCoreAccountFeeUpdated(uint64 previousFee, uint64 newFee);
+
+    /**
+     * @notice Emitted when the newCoreAccountFee is deducted from a deposit to a non-existent HyperCore account.
+     * @param coreRecipient The HyperCore recipient address
+     * @param newCoreAccountFee The configured newCoreAccountFee in core token units (8 decimals)
+     * @param evmDepositAmount The original deposit amount in token units (6 decimals)
+     * @param coreSentAmount The amount sent to the recipient on HyperCore after the newCoreAccountFee fee is deducted in core token units (8 decimals)
+     */
+    event NewCoreAccountFeeApplied(
+        address indexed coreRecipient, uint64 newCoreAccountFee, uint256 evmDepositAmount, uint64 coreSentAmount
+    );
+
+    /**
+     * @notice Emitted when the CoreWriter sendAsset action is called on HyperEVM to send assets to HyperCore.
+     * @param coreRecipient The HyperCore recipient address
+     * @param coreAmount The amount sent to the recipient on HyperCore in core token units (8 decimals)
+     */
+    event SendAsset(address indexed coreRecipient, uint64 coreAmount);
+
     // ============ State Variables ============
 
     // The contract of the HyperEVM token that can be deposited and withdrawn.
@@ -90,10 +126,13 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     // The system address for the token spot asset on HyperCore.
     address public immutable tokenSystemAddress;
 
+    // Fee deducted on HyperCore when the recipient has no existing account (core token units, 8 decimals).
+    uint64 public newCoreAccountFee;
+
     // ============ Constructor ============
     /**
      * @notice Constructor
-     * @param tokenAddress The address of the managed token.
+     * @param tokenAddress The address of the managed token on HyperEVM.
      * @param _tokenSystemAddress The system address for the managed token on HyperCore.
      */
     constructor(address tokenAddress, address _tokenSystemAddress) {
@@ -106,8 +145,8 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     }
 
     /**
-     * @notice Initializes the forwarder contract
-     * @dev Reverts if the tokens and forwarding addresses are not the same length
+     * @notice Initializes the CoreDepositWallet contract
+     * @dev Reverts if the tokens and forwarding addresses are not the same length.
      * @param roles Roles configuration
      */
     function initialize(CoreDepositWalletRoles calldata roles) external initializer {
@@ -116,9 +155,19 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         _transferOwnership(roles.owner);
         _updatePauser(roles.pauser);
         _updateRescuer(roles.rescuer);
+        _setNewCoreAccountFee(DEFAULT_NEW_CORE_ACCOUNT_FEE);
     }
 
     // ============ External Functions  ============
+    /**
+     * @notice Owner-only setter to update the new core account fee
+     * @dev This fee is deducted from deposit amounts when _coreUserExists returns false. This fee is in core token units (8 decimals).
+     * @param fee New fee amount in core token units (8 decimals).
+     */
+    function updateNewCoreAccountFee(uint64 fee) external onlyOwner {
+        _setNewCoreAccountFee(fee);
+    }
+
     /**
      * @notice Deposits tokens to credit the corresponding address on HyperCore.
      * @param amount The amount of tokens being deposited.
@@ -193,17 +242,18 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     }
 
     /**
-     * @notice Returns the CoreWriter sendAsset encoding constants
+     * @notice Returns the HyperCore protocol constants
      */
-    function getSendAssetConstants() external pure returns (SendAssetConstants memory constants) {
-        return SendAssetConstants({
-            actionVersion: ACTION_VERSION,
-            sendAssetActionId: SEND_ASSET_ACTION_ID,
-            tokenIndex: TOKEN_INDEX,
-            sourceSpotDex: SOURCE_SPOT_DEX,
-            destinationPerpDex: DESTINATION_PERP_DEX,
+    function getCoreProtocolConstants() external pure returns (CoreProtocolConstants memory constants) {
+        return CoreProtocolConstants({
+            coreWriterActionVersion: CORE_WRITER_ACTION_VERSION,
+            coreWriterSendAssetActionId: CORE_WRITER_SEND_ASSET_ACTION_ID,
+            coreWriterTokenIndex: CORE_WRITER_TOKEN_INDEX,
+            coreWriterSourceSpotDex: CORE_WRITER_SOURCE_SPOT_DEX,
+            coreWriterDestinationPerpDex: CORE_WRITER_DESTINATION_PERP_DEX,
             coreWriterAddress: CORE_WRITER_ADDRESS,
-            scalingFactor: SCALING_FACTOR
+            coreUserExistsAddress: CORE_USER_EXISTS_ADDRESS,
+            coreScalingFactor: CORE_SCALING_FACTOR
         });
     }
 
@@ -233,9 +283,12 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         super._rescueERC20(tokenContract, to, amount);
     }
 
+    // ============ Internal Functions  ============
+
     /**
      * @notice Move the tokens from spot to perp on HyperCore via CoreWriter sendAsset action.
-     * @dev Scales amount from 6 decimals (HyperEVM) to 8 decimals (HyperCore).
+     * @dev Uses _coreUserExists() to check HyperCore account status and subtracts newCoreAccountFee from the deposit amount for new users.
+     *      Scales the amount from 6 decimals (HyperEVM) to 8 decimals (HyperCore).
      *      Encodes a Hyperliquid CoreWriter sendAsset action:
      *      - Header (packed):
      *        - version: 1 byte (0x01)
@@ -260,16 +313,58 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      *        bytes memory data = abi.encodePacked(ACTION_VERSION, SEND_ASSET_ACTION_ID, payload);
      *
      * @param recipient The address receiving the tokens on HyperCore.
-     * @param amount Amount of tokens to send.
+     * @param evmAmount Amount of tokens to send from HyperCore spot to HyperCore perps in evm token units (6 decimals).
      */
-    function _sendAsset(address recipient, uint256 amount) internal {
-        uint256 scaledAmount = amount.mul(SCALING_FACTOR);
+    function _sendAsset(address recipient, uint256 evmAmount) internal {
+        uint256 scaledAmount = evmAmount.mul(CORE_SCALING_FACTOR);
+        uint64 coreAmount = scaledAmount.toUint64();
+        uint64 _newCoreAccountFee = newCoreAccountFee;
+
+        if (_newCoreAccountFee > 0) {
+            bool userExists = _coreUserExists(recipient);
+            if (!userExists) {
+                require(coreAmount > _newCoreAccountFee, "Amount must exceed new account fee");
+                coreAmount = coreAmount.sub(_newCoreAccountFee).toUint64();
+
+                emit NewCoreAccountFeeApplied(recipient, _newCoreAccountFee, evmAmount, coreAmount);
+            }
+        }
 
         bytes memory payload = abi.encode(
-            recipient, address(0), SOURCE_SPOT_DEX, DESTINATION_PERP_DEX, TOKEN_INDEX, scaledAmount.toUint64()
+            recipient,
+            address(0),
+            CORE_WRITER_SOURCE_SPOT_DEX,
+            CORE_WRITER_DESTINATION_PERP_DEX,
+            CORE_WRITER_TOKEN_INDEX,
+            coreAmount
         );
+        bytes memory data = abi.encodePacked(CORE_WRITER_ACTION_VERSION, CORE_WRITER_SEND_ASSET_ACTION_ID, payload);
 
-        bytes memory data = abi.encodePacked(ACTION_VERSION, SEND_ASSET_ACTION_ID, payload);
         ICoreWriter(CORE_WRITER_ADDRESS).sendRawAction(data);
+
+        emit SendAsset(recipient, coreAmount);
+    }
+
+    /**
+     * @notice Queries the HyperCore precompile to determine if a user account exists.
+     * @dev Makes a staticcall to the CORE_USER_EXISTS_ADDRESS precompile at 0x810.
+     * @param user The address to check for existence on HyperCore
+     * @return exists True if the user exists on HyperCore, false otherwise
+     */
+    function _coreUserExists(address user) internal view returns (bool) {
+        (bool success, bytes memory result) = CORE_USER_EXISTS_ADDRESS.staticcall(abi.encode(user));
+        require(success, "Core user exists precompile call failed");
+        return abi.decode(result, (CoreUserExists)).exists;
+    }
+
+    /**
+     * @notice Updates the fee applied to deposits for users who don't exist on HyperCore.
+     * @dev This fee is deducted from deposit amounts when _coreUserExists returns false.
+     * @param _newCoreAccountFee The new account creation fee in core token units (8 decimals).
+     */
+    function _setNewCoreAccountFee(uint64 _newCoreAccountFee) internal {
+        uint64 previous = newCoreAccountFee;
+        newCoreAccountFee = _newCoreAccountFee;
+        emit NewCoreAccountFeeUpdated(previous, _newCoreAccountFee);
     }
 }
