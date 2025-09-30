@@ -35,7 +35,6 @@ import {SafeMath} from "@openzeppelin/contracts/math/SafeMath.sol";
 contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializable {
     using SafeCast for uint256;
     using SafeMath for uint256;
-    using SafeMath for uint64;
 
     // ============ Constants ============
     uint8 private constant CORE_WRITER_ACTION_VERSION = 0x01;
@@ -324,7 +323,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
             bool userExists = _coreUserExists(recipient);
             if (!userExists) {
                 require(coreAmount > _newCoreAccountFee, "Amount must exceed new account fee");
-                coreAmount = coreAmount.sub(_newCoreAccountFee).toUint64();
+                coreAmount = coreAmount - _newCoreAccountFee;
 
                 emit NewCoreAccountFeeApplied(recipient, _newCoreAccountFee, evmAmount, coreAmount);
             }
