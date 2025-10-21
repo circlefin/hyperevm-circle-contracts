@@ -49,12 +49,14 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
      * @param forwardRecipient Forward recipient
      * @param forwardingAddress Forwarding address
      * @param token Local token address
+     * @param destinationId Destination id
      * @param amount Amount minted
      */
     event MintAndForward(
         address indexed forwardRecipient,
         address indexed forwardingAddress,
         address indexed token,
+        uint32 destinationId,
         uint256 amount
     );
 
@@ -158,7 +160,8 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
         (
             uint32 sourceDomain,
             bytes32 burnToken,
-            address forwardRecipient
+            address forwardRecipient,
+            uint32 destinationId
         ) = _validateCctpMessage(message);
 
         // Get local token address
@@ -194,7 +197,8 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
         // Deposit to forwarding address
         IForwardDepositReceiver(forwardingAddress).depositFor(
             forwardRecipient,
-            amountMinted
+            amountMinted,
+            destinationId
         );
 
         // Emit event
@@ -202,6 +206,7 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
             forwardRecipient,
             forwardingAddress,
             localToken,
+            destinationId,
             amountMinted
         );
     }
@@ -280,6 +285,7 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
      * @return sourceDomain Source domain
      * @return burnToken Burn token
      * @return forwardRecipient Forward recipient
+     * @return destinationId Destination id
      */
     function _validateCctpMessage(
         bytes calldata _message
@@ -289,7 +295,8 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
         returns (
             uint32 sourceDomain,
             bytes32 burnToken,
-            address forwardRecipient
+            address forwardRecipient,
+            uint32 destinationId
         )
     {
         // Validate message and burn message
@@ -323,7 +330,7 @@ contract CctpForwarder is ICctpForwarder, Initializable, Rescuable {
         );
 
         bytes29 hookData = burnMessage._getHookData();
-        forwardRecipient = hookData._getForwardRecipient();
+        (forwardRecipient, destinationId) = hookData._getForwardRecipientAndDestinationId();
     }
 
     /**

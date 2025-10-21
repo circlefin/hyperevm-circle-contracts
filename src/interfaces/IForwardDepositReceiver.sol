@@ -26,9 +26,12 @@ interface IForwardDepositReceiver {
      * @notice Deposit tokens for a recipient
      * @param recipient Recipient of the deposit
      * @param amount Amount of tokens to deposit
+     * @param destinationId Forwarding-address-specific id used in conjunction with
+     * recipient to route the deposit to a specific location.
      */
     function depositFor(
         address recipient,
-        uint256 amount
+        uint256 amount,
+        uint32 destinationId
     ) external;
 }

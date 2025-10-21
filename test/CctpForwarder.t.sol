@@ -40,6 +40,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
         address indexed forwardRecipient,
         address indexed forwardingAddress,
         address indexed token,
+        uint32 destinationId,
         uint256 amount
     );
 
@@ -59,8 +60,9 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
         abi.encodePacked(
             bytes24("cctp-forward"), // 24 bytes magic section
             uint32(0),
-            uint32(20),
-            FORWARD_RECIPIENT
+            uint32(24),
+            FORWARD_RECIPIENT,
+            PERP_DEX_ID
         );
 
     // ============ Default Message ============
@@ -375,7 +377,8 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             bytes24("cctp-forward"), // 24 bytes magic section
             uint32(1), // invalid version
             uint32(20),
-            address(forwarder)
+            address(forwarder),
+            PERP_DEX_ID
         );
         bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
@@ -457,7 +460,8 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
                 bytes24("cctp-forward"), // 24 bytes magic section
                 uint32(0),
                 uint32(20),
-                invalidRecipients[i] // invalid forward recipient
+                invalidRecipients[i], // invalid forward recipient
+                PERP_DEX_ID
             );
             bytes memory burnMessage = _formatBurnMessageForForwarding(
                 BURN_VERSION,
@@ -552,7 +556,15 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
         forwarder.mintAndForward(message, VALID_SIGNATURE);
     }
 
-    function test_MintAndForward_succeeds() public {
+    function test_MintAndForward_succeeds(uint32 destinationDex) public {
+        bytes memory hookData = abi.encodePacked(
+            bytes24("cctp-forward"), // 24 bytes magic section
+            uint32(0),
+            uint32(24),
+            FORWARD_RECIPIENT,
+            destinationDex
+        );
+
         bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
@@ -562,7 +574,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             MAX_FEE,
             FEE_EXECUTED,
             EXPIRATION_BLOCK,
-            HOOK_DATA
+            hookData
         );
         bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
@@ -606,6 +618,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             FORWARD_RECIPIENT,
             address(CORE_DEPOSIT_WALLET),
             TOKEN,
+            destinationDex,
             AMOUNT - FEE_EXECUTED
         );
         forwarder.mintAndForward(message, VALID_SIGNATURE);
@@ -720,7 +733,8 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             bytes24(0), // zero magic bytes - no validation implemented
             uint32(0),
             uint32(20),
-            FORWARD_RECIPIENT
+            FORWARD_RECIPIENT,
+            PERP_DEX_ID
         );
         bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
@@ -748,13 +762,14 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             FORWARD_RECIPIENT,
             address(CORE_DEPOSIT_WALLET),
             TOKEN,
+            PERP_DEX_ID,
             AMOUNT - FEE_EXECUTED
         );
         // No magic bytes validation is implemented, so this should succeed
         forwarder.mintAndForward(message, VALID_SIGNATURE);
     }
 
-        function test_MintAndForward_succeedsWithLongHookData() public {
+    function test_MintAndForward_succeedsWithLongHookData() public {
         bytes memory hookWithZeroMagicBytes = abi.encodePacked(
             bytes24(0),
             uint32(0),
@@ -763,7 +778,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             uint256(9001) // extra data at the end
         );
         assertEq(hookWithZeroMagicBytes.length, 84);
-        
+
         bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
             BURN_TOKEN,
@@ -790,6 +805,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             FORWARD_RECIPIENT,
             address(CORE_DEPOSIT_WALLET),
             TOKEN,
+            PERP_DEX_ID,
             AMOUNT - FEE_EXECUTED
         );
         // No magic bytes validation is implemented, so this should succeed

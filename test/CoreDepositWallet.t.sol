@@ -49,6 +49,28 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint64 coreSentAmount
     );
 
+    /**
+     * @notice Emitted when a destination dex is disabled.
+     * @param dex The disabled destination dex
+     */
+    event DexDisabled(uint32 indexed dex);
+
+    /**
+     * @notice Emitted when a destination dex is enabled.
+     * @param dex The enabled destination dex
+     */
+    event DexEnabled(uint32 indexed dex);
+
+    /**
+     * @notice Emitted when dex forwarding is disabled.
+     */
+    event DexForwardingDisabled();
+
+    /**
+     * @notice Emitted when dex forwarding is enabled.
+     */
+    event DexForwardingEnabled();
+
     address public newTokenSystemAddress = address(11);
     address private constant CORE_USER_EXISTS_ADDRESS =
         0x0000000000000000000000000000000000000810;
@@ -82,15 +104,16 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     // Helper functions
     function _buildCoreWriterAction(
         address sender,
-        uint256 amount
+        uint256 amount,
+        uint32 destinationDex
     ) internal pure returns (bytes memory data) {
         // Scale from 6 decimals (HyperEVM) to 8 decimals (HyperCore) to match contract
         uint256 scaledAmount = amount * 100;
         bytes memory encodedAction = abi.encode(
             sender, // recipient
             address(0), // subAccount
-            type(uint32).max, // SOURCE_SPOT_DEX
-            uint32(0), // DESTINATION_PERP_DEX
+            SPOT_DEX_ID, // SOURCE_SPOT_DEX
+            destinationDex, // destination dex
             uint64(0), // TOKEN_INDEX
             uint64(scaledAmount) // scaled amount as uint64
         );
@@ -140,6 +163,55 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     function _scaleToCore(uint256 evmAmount) internal pure returns (uint64) {
         return uint64(evmAmount * CORE_SCALING_FACTOR);
+    }
+
+    function _assertSuccessfulDepositToSpot(uint256 _amount) internal {
+        // Assert balance of CoreDepositWallet == deposit amount
+        assertEq(
+            MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
+            _amount
+        );
+
+        // Assert that no CoreWriter actions were emitted
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(entries.length, 2);
+        // Transfer to CoreDepositWallet
+        assertEq(entries[0].topics[0], keccak256("Transfer(address,address,uint256)"));
+        // Transfer to recipient
+        assertEq(entries[1].topics[0], keccak256("Transfer(address,address,uint256)"));
+    }
+
+    function _assertSuccessfulDepositWithAuthToSpot(uint256 _amount) internal {
+        // Assert balance of CoreDepositWallet == deposit amount
+        assertEq(
+            MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
+            _amount
+        );
+
+        // Assert that no CoreWriter actions were emitted
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(entries.length, 3);
+        // Transfer to CoreDepositWallet
+        assertEq(entries[0].topics[0], keccak256("AuthorizationUsed(address,bytes32)"));
+        assertEq(entries[1].topics[0], keccak256("Transfer(address,address,uint256)"));
+        // Transfer to recipient
+        assertEq(entries[2].topics[0], keccak256("Transfer(address,address,uint256)"));
+    }
+
+    // Enable destinationDex if disabled
+    function _enableDestinationDex(uint32 _destinationDex) internal {
+        if (!coreDepositWallet.enabledDestinationDexes(_destinationDex)) {
+            vm.prank(coreDepositWalletOwner);
+            coreDepositWallet.enableDex(_destinationDex);
+        }
+    }
+
+    // Disable destinationDex if enabled
+    function _disableDestinationDex(uint32 _destinationDex) internal {
+        if (coreDepositWallet.enabledDestinationDexes(_destinationDex)) {
+            vm.prank(coreDepositWalletOwner);
+            coreDepositWallet.disableDex(_destinationDex);
+        }
     }
 
     // Proxy tests
@@ -379,15 +451,17 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         coreDepositWallet.rescueERC20(tokenContract, _to, _amount);
     }
 
-    function testDeposit_succeeds(uint256 _amount, address _sender) public {
+    function testDeposit_succeeds(uint256 _amount, address _sender, uint32 destinationDex) public {
         vm.assume(_amount > 0);
         vm.assume(_amount <= type(uint64).max / 100); // Ensure scaled amount fits in uint64
         vm.assume(_sender != address(0));
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
         uint64 coreScaledAmount = uint64(_amount * 100); // scaled core amount
 
         // Setup tokens for sender
         _setupTokenMintAndApprove(_sender, _amount);
-        vm.startPrank(_sender);
+        _enableDestinationDex(destinationDex);
 
         // Check that the Transfer event was emitted
         vm.expectEmit(true, true, true, true);
@@ -398,7 +472,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
 
         // Check that the SendRawAction event was emitted from CoreWriter
-        bytes memory expectedData = _buildCoreWriterAction(_sender, _amount);
+        bytes memory expectedData = _buildCoreWriterAction(_sender, _amount, destinationDex);
 
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
@@ -407,8 +481,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.expectEmit(true, true, true, true);
         emit SendAsset(_sender, coreScaledAmount);
 
+        vm.startPrank(_sender);
         // Deposit tokens into the CoreDepositWallet
-        coreDepositWallet.deposit(_amount);
+        coreDepositWallet.deposit(_amount, destinationDex);
         vm.stopPrank();
 
         // Check the balance of the CoreDepositWallet
@@ -418,19 +493,21 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
-    function testDeposit_succeedsWithMaxUint64Amount(address _sender) public {
+    function testDeposit_succeedsWithMaxUint64Amount(address _sender, uint32 destinationDex) public {
         uint256 amount = type(uint64).max / 100; // Max amount before scaling overflow
         vm.assume(_sender != address(0));
         uint64 coreScaledAmount = uint64(amount * 100); // scaled core amount
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
         // Arrange
         _setupTokenMintAndApprove(_sender, amount);
-        vm.startPrank(_sender);
+        _enableDestinationDex(destinationDex);
 
         // Expect Transfer and CoreWriter action
         vm.expectEmit(true, true, true, true);
         emit Transfer(address(coreDepositWallet), TOKEN_SYSTEM_ADDRESS, amount);
 
-        bytes memory expectedData = _buildCoreWriterAction(_sender, amount);
+        bytes memory expectedData = _buildCoreWriterAction(_sender, amount, destinationDex);
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
 
@@ -439,7 +516,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         emit SendAsset(_sender, coreScaledAmount);
 
         // Act
-        coreDepositWallet.deposit(amount);
+        vm.startPrank(_sender);
+        coreDepositWallet.deposit(amount, destinationDex);
         vm.stopPrank();
 
         // Assert balance
@@ -449,9 +527,103 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
+    function testDeposit_depositsToSpotIfDexForwardingDisabled(uint256 _amount, address _sender, uint32 destinationDex) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
+        // Disable dex forwarding
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.disableDexForwarding();
+
+        // Enable specified dex
+        _enableDestinationDex(destinationDex);
+
+        // Validate dex forwarding is disabled, and specified is enabled
+        assertTrue(coreDepositWallet.isDexForwardingDisabled());
+        assertTrue(coreDepositWallet.enabledDestinationDexes(destinationDex));
+
+        // Setup tokens for sender
+        _setupTokenMintAndApprove(_sender, _amount);
+        vm.startPrank(_sender);
+
+        // Check that the Transfer event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(_sender),
+            TOKEN_SYSTEM_ADDRESS,
+            _amount
+        );
+
+        // Start recording logs.
+        vm.recordLogs();
+
+        // Deposit tokens into the CoreDepositWallet
+        coreDepositWallet.deposit(_amount, destinationDex);
+        vm.stopPrank();
+
+        _assertSuccessfulDepositToSpot(_amount);
+    }
+
+    function testDeposit_depositsToSpotIfDexIsSpot(address _sender, uint256 _amount) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+
+        // Setup tokens for sender
+        _setupTokenMintAndApprove(_sender, _amount);
+        vm.startPrank(_sender);
+
+        // Check that the Transfer event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(_sender),
+            TOKEN_SYSTEM_ADDRESS,
+            _amount
+        );
+
+        // Start recording logs.
+        vm.recordLogs();
+
+        // Deposit tokens into the CoreDepositWallet
+        coreDepositWallet.deposit(_amount, SPOT_DEX_ID);
+        vm.stopPrank();
+
+        _assertSuccessfulDepositToSpot(_amount);
+    }
+
+    function testDeposit_depositsToSpotIfDexIsDisabled(uint256 _amount, address _sender, uint32 disabledDex) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+
+        // Setup tokens for sender
+        _setupTokenMintAndApprove(_sender, _amount);
+        // Disable the specified dex
+        _disableDestinationDex(disabledDex);
+
+        vm.startPrank(_sender);
+
+        // Check that the Transfer event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            address(_sender),
+            TOKEN_SYSTEM_ADDRESS,
+            _amount
+        );
+
+        // Start recording logs.
+        vm.recordLogs();
+
+        // Deposit tokens into the CoreDepositWallet
+        coreDepositWallet.deposit(_amount, disabledDex);
+        vm.stopPrank();
+
+        _assertSuccessfulDepositToSpot(_amount);
+    }
+
     function testDeposit_revertsOnUint256Overflow(
         uint256 _amount,
-        address _sender
+        address _sender,
+        uint32 destinationDex
     ) public {
         _amount = bound(
             _amount,
@@ -459,6 +631,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             type(uint256).max
         ); // Will cause SafeMath multiplication overflow
         vm.assume(_sender != address(0));
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
+        // Enable destination dex
+        _enableDestinationDex(destinationDex);
 
         // Mint tokens to the sender
         MockDepositableToken(TOKEN).mint(_sender, _amount);
@@ -471,19 +647,24 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Expect revert due to SafeMath multiplication overflow
         vm.expectRevert("SafeMath: multiplication overflow");
-        coreDepositWallet.deposit(_amount);
+        coreDepositWallet.deposit(_amount, destinationDex);
         vm.stopPrank();
     }
 
     function testDeposit_revertsOnUint64Overflow(
         uint256 _amount,
-        address _sender
+        address _sender,
+        uint32 destinationDex
     ) public {
         vm.assume(
             _amount > type(uint64).max / 100 &&
                 _amount <= type(uint256).max / 100
         ); // Will cause SafeCast overflow after scaling
         vm.assume(_sender != address(0));
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
+        // Enable destination dex
+        _enableDestinationDex(destinationDex);
 
         // Mint tokens to the sender
         MockDepositableToken(TOKEN).mint(_sender, _amount);
@@ -497,15 +678,20 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Expect revert due to SafeCast overflow
         vm.expectRevert("SafeCast: value doesn't fit in 64 bits");
-        coreDepositWallet.deposit(_amount);
+        coreDepositWallet.deposit(_amount, destinationDex);
         vm.stopPrank();
     }
 
     function testDeposit_revertsWhenTransferFails(
         uint256 _amount,
-        address _sender
+        address _sender,
+        uint32 destinationDex
     ) public {
         vm.assume(_sender != address(0));
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
+        // Enable destination dex
+        _enableDestinationDex(destinationDex);
 
         vm.prank(_sender);
         vm.mockCall(
@@ -516,10 +702,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.assume(_amount > 0);
         vm.expectRevert("Transfer operation failed");
-        coreDepositWallet.deposit(_amount);
+        coreDepositWallet.deposit(_amount, destinationDex);
     }
 
-    function testDeposit_revertsWhenPaused(uint256 _amount) public {
+    function testDeposit_revertsWhenPaused(uint256 _amount, uint32 destinationDex) public {
         vm.assume(_amount > 0);
 
         vm.prank(coreDepositWalletPauser);
@@ -527,18 +713,19 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         assertTrue(coreDepositWallet.paused());
 
         vm.expectRevert("Pausable: paused");
-        coreDepositWallet.deposit(_amount);
+        coreDepositWallet.deposit(_amount, destinationDex);
     }
 
-    function testDeposit_revertsWithZeroAmount() public {
+    function testDeposit_revertsWithZeroAmount(uint32 destinationDex) public {
         vm.expectRevert("Amount must be greater than zero");
-        coreDepositWallet.deposit(0);
+        coreDepositWallet.deposit(0, destinationDex);
     }
 
     function testDepositFor_succeeds(
         address _sender,
         address _recipient,
-        uint256 _amount
+        uint256 _amount,
+        uint32 destinationDex
     ) public {
         vm.assume(_amount > 0);
         vm.assume(_amount <= type(uint64).max / 100); // Ensure scaled amount fits in uint64
@@ -546,10 +733,13 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
         vm.assume(_recipient != address(coreDepositWallet));
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
+        uint64 coreScaledAmount = uint64(_amount * 100); // scaled core amount
 
         // Setup tokens for sender
         _setupTokenMintAndApprove(_sender, _amount);
-        vm.startPrank(_sender);
+        _enableDestinationDex(destinationDex);
 
         // Check that the Transfer event was emitted
         vm.expectEmit(true, true, true, true);
@@ -558,18 +748,20 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             TOKEN_SYSTEM_ADDRESS,
             _amount
         );
+
         // Check that the SendRawAction event was emitted from CoreWriter
-        bytes memory expectedData = _buildCoreWriterAction(_recipient, _amount);
+        bytes memory expectedData = _buildCoreWriterAction(_recipient, _amount, destinationDex);
 
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
 
         // Expect SendAsset event with scaled amount
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(_recipient, uint64(_amount * 100));
+        emit SendAsset(_recipient, coreScaledAmount);
 
+        vm.startPrank(_sender);
         // Deposit tokens into the CoreDepositWallet
-        coreDepositWallet.depositFor(_recipient, _amount);
+        coreDepositWallet.depositFor(_recipient, _amount, destinationDex);
         vm.stopPrank();
 
         // Check the balance of the CoreDepositWallet
@@ -581,28 +773,31 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     function testDepositFor_succeedsWithMaxUint64Amount(
         address _sender,
-        address _recipient
+        address _recipient,
+        uint32 destinationDex
     ) public {
         uint256 amount = type(uint64).max / 100; // Max amount before scaling overflow
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
         vm.assume(_recipient != address(coreDepositWallet));
+        vm.assume(destinationDex != SPOT_DEX_ID);
 
         // Arrange
         _setupTokenMintAndApprove(_sender, amount);
-        vm.startPrank(_sender);
+        _enableDestinationDex(destinationDex);
 
         // Expect Transfer and CoreWriter action
         vm.expectEmit(true, true, true, true);
         emit Transfer(address(coreDepositWallet), TOKEN_SYSTEM_ADDRESS, amount);
 
-        bytes memory expectedData = _buildCoreWriterAction(_recipient, amount);
+        bytes memory expectedData = _buildCoreWriterAction(_recipient, amount, destinationDex);
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
 
         // Act
-        coreDepositWallet.depositFor(_recipient, amount);
+        vm.startPrank(_sender);
+        coreDepositWallet.depositFor(_recipient, amount, destinationDex);
         vm.stopPrank();
 
         // Assert balance
@@ -612,10 +807,113 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
+    function testDepositFor_depositsToSpotIfDexForwardingDisabled(address _sender, address _recipient, uint256 _amount, uint32 destinationDex) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+        vm.assume(_recipient != address(0));
+        vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
+        vm.assume(_recipient != address(coreDepositWallet));
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
+        // Disable dex forwarding
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.disableDexForwarding();
+
+        // Enable specified destination dex
+        _enableDestinationDex(destinationDex);
+
+        // Validate dex forwarding is disabled, and specified destination dex is enabled
+        assertTrue(coreDepositWallet.isDexForwardingDisabled());
+        assertTrue(coreDepositWallet.enabledDestinationDexes(destinationDex));
+
+        // Setup tokens for sender
+        _setupTokenMintAndApprove(_sender, _amount);
+        vm.startPrank(_sender);
+
+        // Check that the Transfer event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            _recipient,
+            TOKEN_SYSTEM_ADDRESS,
+            _amount
+        );
+
+        // Start recording logs.
+        vm.recordLogs();
+
+        // Deposit tokens into the CoreDepositWallet
+        coreDepositWallet.depositFor(_recipient, _amount, destinationDex);
+        vm.stopPrank();
+
+        _assertSuccessfulDepositToSpot(_amount);
+    }
+
+    function testDepositFor_depositsToSpotIfDexIsSpot(address _sender, address _recipient, uint256 _amount) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+        vm.assume(_recipient != address(0));
+        vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
+        vm.assume(_recipient != address(coreDepositWallet));
+
+        // Setup tokens for sender
+        _setupTokenMintAndApprove(_sender, _amount);
+        vm.startPrank(_sender);
+
+        // Check that the Transfer event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            _recipient,
+            TOKEN_SYSTEM_ADDRESS,
+            _amount
+        );
+
+        // Start recording logs.
+        vm.recordLogs();
+
+        // Deposit tokens into the CoreDepositWallet
+        coreDepositWallet.depositFor(_recipient, _amount, SPOT_DEX_ID);
+        vm.stopPrank();
+
+        _assertSuccessfulDepositToSpot(_amount);
+    }
+
+    function testDepositFor_depositsToSpotIfDexIsDisabled(address _sender, address _recipient, uint256 _amount, uint32 disabledDex) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+        vm.assume(_recipient != address(0));
+        vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
+        vm.assume(_recipient != address(coreDepositWallet));
+
+        // Disable the specified dex
+        _disableDestinationDex(disabledDex);
+
+        // Setup tokens for sender
+        _setupTokenMintAndApprove(_sender, _amount);
+        vm.startPrank(_sender);
+
+        // Check that the Transfer event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            _recipient,
+            TOKEN_SYSTEM_ADDRESS,
+            _amount
+        );
+
+        // Start recording logs.
+        vm.recordLogs();
+
+        // Deposit tokens into the CoreDepositWallet
+        coreDepositWallet.depositFor(_recipient, _amount, disabledDex);
+        vm.stopPrank();
+
+        _assertSuccessfulDepositToSpot(_amount);
+    }
+
     function testDepositFor_revertsOnUint256Overflow(
         uint256 _amount,
         address _sender,
-        address _recipient
+        address _recipient,
+        uint32 _destinationDex
     ) public {
         _amount = bound(
             _amount,
@@ -626,6 +924,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
         vm.assume(_recipient != address(coreDepositWallet));
+        vm.assume(_destinationDex != SPOT_DEX_ID);
+
+        // Enable destination dex
+        _enableDestinationDex(_destinationDex);
 
         // Mint tokens to the sender
         MockDepositableToken(TOKEN).mint(_sender, _amount);
@@ -639,14 +941,15 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Expect revert due to SafeMath multiplication overflow
         vm.expectRevert("SafeMath: multiplication overflow");
-        coreDepositWallet.depositFor(_recipient, _amount);
+        coreDepositWallet.depositFor(_recipient, _amount, _destinationDex);
         vm.stopPrank();
     }
 
     function testDepositFor_revertsOnUint64Overflow(
         uint256 _amount,
         address _sender,
-        address _recipient
+        address _recipient,
+        uint32 _destinationDex
     ) public {
         vm.assume(
             _amount > type(uint64).max / 100 &&
@@ -656,6 +959,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
         vm.assume(_recipient != address(coreDepositWallet));
+        vm.assume(_destinationDex != SPOT_DEX_ID);
+
+        // Enable destination dex
+        _enableDestinationDex(_destinationDex);
 
         // Mint tokens to the sender
         MockDepositableToken(TOKEN).mint(_sender, _amount);
@@ -669,14 +976,15 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Expect revert due to SafeCast overflow
         vm.expectRevert("SafeCast: value doesn't fit in 64 bits");
-        coreDepositWallet.depositFor(_recipient, _amount);
+        coreDepositWallet.depositFor(_recipient, _amount, _destinationDex);
         vm.stopPrank();
     }
 
     function testDepositFor_revertsWhenTransferFails(
         address _sender,
         address _recipient,
-        uint256 _amount
+        uint256 _amount,
+        uint32 _destinationDex
     ) public {
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
@@ -692,49 +1000,53 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.assume(_amount > 0);
         vm.expectRevert("Transfer operation failed");
-        coreDepositWallet.depositFor(_recipient, _amount);
+        coreDepositWallet.depositFor(_recipient, _amount, _destinationDex);
     }
 
     function testDepositFor_revertsWhenRecipientIsZeroAddress(
         address _sender,
-        uint256 _amount
+        uint256 _amount,
+        uint32 _destinationDex
     ) public {
         vm.assume(_sender != address(0));
         vm.assume(_amount > 0);
 
         vm.prank(_sender);
         vm.expectRevert("Invalid recipient: zero address");
-        coreDepositWallet.depositFor(address(0), _amount);
+        coreDepositWallet.depositFor(address(0), _amount, _destinationDex);
     }
 
     function testDepositFor_revertsWhenRecipientIsSystemAddress(
         address _sender,
-        uint256 _amount
+        uint256 _amount,
+        uint32 _destinationDex
     ) public {
         vm.assume(_sender != address(0));
         vm.assume(_amount > 0);
 
         vm.prank(_sender);
         vm.expectRevert("Invalid recipient: system address");
-        coreDepositWallet.depositFor(TOKEN_SYSTEM_ADDRESS, _amount);
+        coreDepositWallet.depositFor(TOKEN_SYSTEM_ADDRESS, _amount, _destinationDex);
     }
 
     function testDepositFor_revertsWhenRecipientIsCoreDepositWallet(
         address _sender,
-        uint256 _amount
+        uint256 _amount,
+        uint32 _destinationDex
     ) public {
         vm.assume(_sender != address(0));
         vm.assume(_amount > 0);
 
         vm.prank(_sender);
         vm.expectRevert("Invalid recipient: CoreDepositWallet");
-        coreDepositWallet.depositFor(address(coreDepositWallet), _amount);
+        coreDepositWallet.depositFor(address(coreDepositWallet), _amount, _destinationDex);
     }
 
     function testDepositFor_revertsWhenRecipientBlocklisted(
         address _sender,
         address _recipient,
-        uint256 _amount
+        uint256 _amount,
+        uint32 _destinationDex
     ) public {
         vm.assume(_sender != address(0));
         vm.assume(_amount > 0);
@@ -746,13 +1058,14 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.prank(_sender);
         vm.expectRevert("Invalid recipient: blacklisted");
-        coreDepositWallet.depositFor(_recipient, _amount);
+        coreDepositWallet.depositFor(_recipient, _amount, _destinationDex);
     }
 
     function testDepositFor_revertsWhenPaused(
         address _sender,
         address _recipient,
-        uint256 _amount
+        uint256 _amount,
+        uint32 _destinationDex
     ) public {
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
@@ -764,12 +1077,13 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.prank(_sender);
         vm.expectRevert("Pausable: paused");
-        coreDepositWallet.depositFor(_recipient, _amount);
+        coreDepositWallet.depositFor(_recipient, _amount, _destinationDex);
     }
 
     function testDepositFor_revertsWithZeroAmount(
         address sender,
-        address recipient
+        address recipient,
+        uint32 _destinationDex
     ) public {
         vm.assume(recipient != address(0));
         vm.assume(recipient != TOKEN_SYSTEM_ADDRESS);
@@ -777,20 +1091,24 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.prank(sender);
         vm.expectRevert("Amount must be greater than zero");
-        coreDepositWallet.depositFor(recipient, 0);
+        coreDepositWallet.depositFor(recipient, 0, _destinationDex);
     }
 
     function testDepositWithAuth_succeeds(
         uint256 _amount,
-        address _sender
+        address _sender,
+        uint32 _destinationDex
     ) public {
         vm.assume(_amount > 0);
         vm.assume(_amount <= type(uint64).max / 100); // Ensure scaled amount fits in uint64
         vm.assume(_sender != address(0));
+        vm.assume(_destinationDex != SPOT_DEX_ID);
+
         uint64 coreScaledAmount = uint64(_amount * 100); // scaled core amount
 
         // Mint tokens to the sender
         MockDepositableToken(TOKEN).mint(_sender, _amount);
+        _enableDestinationDex(_destinationDex);
 
         // Check that the Transfer event was emitted
         vm.expectEmit(true, true, true, true);
@@ -801,7 +1119,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
 
         // Check that the SendRawAction event was emitted from CoreWriter
-        bytes memory expectedData = _buildCoreWriterAction(_sender, _amount);
+        bytes memory expectedData = _buildCoreWriterAction(_sender, _amount, _destinationDex);
 
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
@@ -819,7 +1137,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             bytes32("nonce"),
             0,
             bytes32("s"),
-            bytes32("v")
+            bytes32("v"),
+            _destinationDex
         );
 
         // Check the balance of the CoreDepositWallet
@@ -830,19 +1149,22 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     }
 
     function testDepositWithAuth_succeedsWithMaxUint64Amount(
-        address _sender
+        address _sender,
+        uint32 _destinationDex
     ) public {
         uint256 amount = type(uint64).max / 100; // Max amount before scaling overflow
         vm.assume(_sender != address(0));
+        vm.assume(_destinationDex != SPOT_DEX_ID);
         uint64 coreScaledAmount = uint64(amount * 100); // scaled core amount
         // Arrange (token is pulled via receiveWithAuthorization)
         MockDepositableToken(TOKEN).mint(_sender, amount);
+        _enableDestinationDex(_destinationDex);
 
         // Expect Transfer and CoreWriter action
         vm.expectEmit(true, true, true, true);
         emit Transfer(address(coreDepositWallet), TOKEN_SYSTEM_ADDRESS, amount);
 
-        bytes memory expectedData = _buildCoreWriterAction(_sender, amount);
+        bytes memory expectedData = _buildCoreWriterAction(_sender, amount, _destinationDex);
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
 
@@ -859,7 +1181,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             bytes32("nonce"),
             0,
             bytes32("r"),
-            bytes32("s")
+            bytes32("s"),
+            _destinationDex
         );
 
         // Assert balance
@@ -871,7 +1194,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     function testDepositWithAuth_revertsOnUint256Overflow(
         uint256 _amount,
-        address _sender
+        address _sender,
+        uint32 _destinationDex
     ) public {
         _amount = bound(
             _amount,
@@ -879,6 +1203,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             type(uint256).max
         ); // Will cause SafeMath multiplication overflow
         vm.assume(_sender != address(0));
+        vm.assume(_destinationDex != SPOT_DEX_ID);
+
+        _enableDestinationDex(_destinationDex);
 
         // Mint tokens to the sender
         MockDepositableToken(TOKEN).mint(_sender, _amount);
@@ -893,19 +1220,24 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             bytes32("nonce"),
             0,
             bytes32("r"),
-            bytes32("s")
+            bytes32("s"),
+            _destinationDex
         );
     }
 
     function testDepositWithAuth_revertsOnUint64Overflow(
         uint256 _amount,
-        address _sender
+        address _sender,
+        uint32 _destinationDex
     ) public {
         vm.assume(
             _amount > type(uint64).max / 100 &&
                 _amount <= type(uint256).max / 100
         ); // Will cause SafeCast overflow after scaling
         vm.assume(_sender != address(0));
+        vm.assume(_destinationDex != SPOT_DEX_ID);
+
+        _enableDestinationDex(_destinationDex);
 
         // Mint tokens to the sender
         MockDepositableToken(TOKEN).mint(_sender, _amount);
@@ -920,13 +1252,15 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             bytes32("nonce"),
             0,
             bytes32("r"),
-            bytes32("s")
+            bytes32("s"),
+            _destinationDex
         );
     }
 
     function testDepositWithAuth_revertsWhenPaused(
         uint256 _amount,
-        address _sender
+        address _sender,
+        uint32 _destinationDex
     ) public {
         vm.assume(_amount > 0);
         vm.assume(_sender != address(0));
@@ -944,11 +1278,12 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             bytes32("nonce"),
             0,
             bytes32("s"),
-            bytes32("v")
+            bytes32("v"),
+            _destinationDex
         );
     }
 
-    function testDepositWithAuth_revertsWithZeroAmount(address _sender) public {
+    function testDepositWithAuth_revertsWithZeroAmount(address _sender, uint32 _destinationDex) public {
         vm.assume(_sender != address(0));
 
         vm.expectRevert("Amount must be greater than zero");
@@ -960,13 +1295,15 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             bytes32("nonce"),
             0,
             bytes32("s"),
-            bytes32("v")
+            bytes32("v"),
+            _destinationDex
         );
     }
 
     function testDepositWithAuth_revertsWhenReceiveFails(
         uint256 _amount,
-        address _sender
+        address _sender,
+        uint32 _destinationDex
     ) public {
         vm.assume(_amount > 0);
         vm.assume(_sender != address(0));
@@ -988,7 +1325,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             bytes32("nonce"),
             0,
             bytes32("s"),
-            bytes32("v")
+            bytes32("v"),
+            _destinationDex
         );
     }
 
@@ -1066,11 +1404,15 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     function testSendAssetEncoding_matchesSpec(
         address _sender,
-        uint256 _amount
+        uint256 _amount,
+        uint32 _destinationDex
     ) public {
         // Constrain to valid values that avoid scaled amount overflow
         vm.assume(_sender != address(0));
         vm.assume(_amount > 0 && _amount <= type(uint64).max / 100);
+        vm.assume(_destinationDex != SPOT_DEX_ID);
+
+        _enableDestinationDex(_destinationDex);
 
         // Arrange
         MockDepositableToken(TOKEN).mint(_sender, _amount);
@@ -1084,7 +1426,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.recordLogs();
 
         // Act
-        coreDepositWallet.deposit(_amount);
+        coreDepositWallet.deposit(_amount, _destinationDex);
         vm.stopPrank();
 
         // Extract the raw action bytes from CoreWriter's SendRawAction event
@@ -1141,10 +1483,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             assertEq(subAccount, address(0), "subAccount");
             assertEq(
                 uint256(sourceDex),
-                uint256(type(uint32).max),
+                uint256(SPOT_DEX_ID),
                 "sourceDex"
             );
-            assertEq(uint256(destinationDex), uint256(0), "destinationDex");
+            assertEq(uint256(destinationDex), _destinationDex, "destinationDex");
             assertEq(uint256(tokenIndex), uint256(0), "tokenIndex");
             assertEq(uint256(amount64), uint256(_amount * 100), "amount");
         }
@@ -1170,7 +1512,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
         assertEq(
             uint256(c.coreWriterSourceSpotDex),
-            uint256(type(uint32).max),
+            uint256(SPOT_DEX_ID),
             "coreWriterSourceSpotDex"
         );
         assertEq(
@@ -1225,9 +1567,126 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
+    function testEnableDexForwarding_onlyOwner(uint32 dex) public {
+        vm.prank(address(0x999));
+        vm.expectRevert("Ownable: caller is not the owner");
+        coreDepositWallet.enableDexForwarding();
+    }
+
+    function testEnableDexForwarding_alreadyEnabled() public {
+        vm.prank(coreDepositWalletOwner);
+        vm.expectRevert("Dex forwarding already enabled");
+        coreDepositWallet.enableDexForwarding();
+    }
+
+    function testEnableDexForwarding_succeeds() public {
+        vm.startPrank(coreDepositWalletOwner);
+
+        // Disable then enable
+        vm.expectEmit(true, true, true, true);
+        emit DexForwardingDisabled();
+        coreDepositWallet.disableDexForwarding();
+        assertTrue(coreDepositWallet.isDexForwardingDisabled());
+
+        vm.expectEmit(true, true, true, true);
+        emit DexForwardingEnabled();
+        coreDepositWallet.enableDexForwarding();
+        assertFalse(coreDepositWallet.isDexForwardingDisabled());
+
+        vm.stopPrank();
+    }
+
+    function testDisableDexForwarding_onlyOwner() public {
+        // Non-owner cannot update
+        vm.prank(address(0x999));
+        vm.expectRevert("Ownable: caller is not the owner");
+        coreDepositWallet.disableDexForwarding();
+    }
+
+    function testDisableDexForwarding_alreadyDisabled() public {
+        vm.startPrank(coreDepositWalletOwner);
+        
+        coreDepositWallet.disableDexForwarding();
+        assertTrue(coreDepositWallet.isDexForwardingDisabled());
+
+        vm.expectRevert("Dex forwarding already disabled");
+        coreDepositWallet.disableDexForwarding();
+        vm.stopPrank();
+    }
+
+    function testDisableDexForwarding_succeeds() public {
+        vm.prank(coreDepositWalletOwner);
+        vm.expectEmit(true, true, true, true);
+        emit DexForwardingDisabled();
+        coreDepositWallet.disableDexForwarding();
+        assertTrue(coreDepositWallet.isDexForwardingDisabled());
+    }
+
+    function testEnableDex_onlyOwner(uint32 dex) public {
+        vm.prank(address(0x999));
+        vm.expectRevert("Ownable: caller is not the owner");
+        coreDepositWallet.enableDex(dex);
+    }
+
+    function testEnableDex_cannotEnableSpotDex() public {
+        vm.prank(coreDepositWalletOwner);
+        vm.expectRevert("Cannot enable spot dex");
+        coreDepositWallet.enableDex(SPOT_DEX_ID);
+    }
+
+    function testEnableDex_cannotEnableAlreadyEnabledDex(uint32 dex) public {
+        vm.assume(dex != PERP_DEX_ID);
+        vm.assume(dex != SPOT_DEX_ID);
+
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.enableDex(dex);
+
+        vm.prank(coreDepositWalletOwner);
+        vm.expectRevert("Dex already enabled");
+        coreDepositWallet.enableDex(dex); // try to enable again
+    }
+
+    function testEnableDex_succeeds(uint32 dex) public {
+        vm.assume(dex != PERP_DEX_ID);
+        vm.assume(dex != SPOT_DEX_ID);
+        vm.prank(coreDepositWalletOwner);
+        vm.expectEmit(true, true, true, true);
+        emit DexEnabled(dex);
+        coreDepositWallet.enableDex(dex);
+    }
+
+    function testDisableDex_onlyOwner(uint32 dex) public {
+        vm.prank(address(0x999));
+        vm.expectRevert("Ownable: caller is not the owner");
+        coreDepositWallet.disableDex(dex);
+    }
+
+    function testDisableDex_alreadyDisabled(uint32 dex) public {
+        vm.assume(dex != PERP_DEX_ID);
+        vm.prank(coreDepositWalletOwner);
+        vm.expectRevert("Dex already disabled");
+        coreDepositWallet.disableDex(dex);
+    }
+
+    function testDisableDex_succeeds(uint32 dex) public {
+        vm.assume(dex != PERP_DEX_ID); // already enabled
+        vm.assume(dex != SPOT_DEX_ID); // cannot be enabled
+
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.enableDex(dex);
+
+        vm.prank(coreDepositWalletOwner);
+        vm.expectEmit(true, true, true, true);
+        emit DexDisabled(dex);
+        coreDepositWallet.disableDex(dex);
+    }
+
     function testDepositFor_existingUser_noFeeApplied(
-        uint256 evmDepositAmount
+        uint256 evmDepositAmount,
+        uint32 destinationDex
     ) public {
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
         // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
         evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
         uint64 scaledCoreAmount = uint64(evmDepositAmount * 100);
@@ -1236,6 +1695,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         // Mock user exists (returns true)
         _mockCoreUserExists(recipient, true);
 
+        _enableDestinationDex(destinationDex);
+
         // Mock token operations
         _setupTokenMintAndApprove(address(this), evmDepositAmount);
 
@@ -1243,8 +1704,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         bytes memory expectedPayload = abi.encode(
             recipient,
             address(0),
-            type(uint32).max,
-            uint32(0),
+            SPOT_DEX_ID,
+            destinationDex,
             uint64(0),
             scaledCoreAmount
         );
@@ -1271,13 +1732,16 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.expectEmit(true, true, true, true);
         emit SendAsset(recipient, scaledCoreAmount); // scaled core amount without any fee deduction
 
-        coreDepositWallet.depositFor(recipient, evmDepositAmount);
+        coreDepositWallet.depositFor(recipient, evmDepositAmount, destinationDex);
     }
 
     function testDepositFor_newUser_feeApplied(
         uint256 evmDepositAmount,
-        uint64 coreNewAccountFee
+        uint64 coreNewAccountFee,
+        uint32 destinationDex
     ) public {
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
         (uint256 evmAmount, uint64 fee) = _boundDepositAndFee(
             evmDepositAmount,
             coreNewAccountFee
@@ -1285,6 +1749,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint64 coreScaledAmount = _scaleToCore(evmAmount);
         uint64 coreNetScaledAmount = uint64(uint256(coreScaledAmount) - fee);
         address recipient = address(0x123);
+
+        _enableDestinationDex(destinationDex);
 
         // Set up fee (core units)
         vm.prank(coreDepositWalletOwner);
@@ -1300,8 +1766,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         bytes memory expectedPayload = abi.encode(
             recipient,
             address(0),
-            type(uint32).max,
-            uint32(0),
+            SPOT_DEX_ID,
+            destinationDex,
             uint64(0),
             coreNetScaledAmount
         );
@@ -1340,13 +1806,18 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.expectEmit(true, true, true, true);
         emit SendAsset(recipient, coreNetScaledAmount);
 
-        coreDepositWallet.depositFor(recipient, evmAmount);
+        coreDepositWallet.depositFor(recipient, evmAmount, destinationDex);
     }
 
     function testDepositFor_newUser_insufficientAmount_reverts(
         uint256 evmDepositAmount,
-        uint64 coreFee
+        uint64 coreFee,
+        uint32 destinationDex
     ) public {
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
+        _enableDestinationDex(destinationDex);
+
         // Choose fee (core units) large enough that some deposit amounts are <= fee/100
         coreFee = uint64(bound(uint256(coreFee), 100, type(uint64).max));
         // Constrain: 1 <= depositAmount <= floor(coreFee/100)
@@ -1365,15 +1836,20 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Should revert with insufficient amount (100*evmDeposit <= coreFee)
         vm.expectRevert("Amount must exceed new account fee");
-        coreDepositWallet.depositFor(recipient, evmDepositAmount);
+        coreDepositWallet.depositFor(recipient, evmDepositAmount, destinationDex);
     }
 
     function testDepositFor_newUser_exactFeeAmount_reverts(
-        uint64 coreFee
+        uint64 coreFee,
+        uint32 destinationDex
     ) public {
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
         // Bound fee (core units) so that depositAmount = coreFee/100 is valid (>0)
         coreFee = uint64(bound(uint256(coreFee), 100, type(uint64).max));
         address recipient = address(0x123);
+
+        _enableDestinationDex(destinationDex);
 
         // Set up fee
         vm.prank(coreDepositWalletOwner);
@@ -1388,12 +1864,17 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Should revert when 100*evmDepositAmount <= coreFee
         vm.expectRevert("Amount must exceed new account fee");
-        coreDepositWallet.depositFor(recipient, evmDepositAmount);
+        coreDepositWallet.depositFor(recipient, evmDepositAmount, destinationDex);
     }
 
     function testDepositFor_newUser_zeroFee_noFeeLogic(
-        uint256 evmDepositAmount
+        uint256 evmDepositAmount,
+        uint32 destinationDex
     ) public {
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
+        _enableDestinationDex(destinationDex);
+
         // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
         evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
         uint64 coreScaledAmount = uint64(evmDepositAmount * 100); // scaled core amount
@@ -1414,8 +1895,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         bytes memory expectedPayload = abi.encode(
             recipient,
             address(0),
-            type(uint32).max,
-            uint32(0),
+            SPOT_DEX_ID,
+            destinationDex,
             uint64(0),
             coreScaledAmount
         );
@@ -1443,29 +1924,32 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.expectEmit(true, true, true, true);
         emit SendAsset(recipient, coreScaledAmount);
 
-        coreDepositWallet.depositFor(recipient, evmDepositAmount);
+        coreDepositWallet.depositFor(recipient, evmDepositAmount, destinationDex);
     }
 
     function testDeposit_existingUser_noFeeApplied(
         address _sender,
-        uint256 evmDepositAmount
+        uint256 evmDepositAmount,
+        uint32 destinationDex
     ) public {
         // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
         evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
         uint64 coreScaledAmount = uint64(evmDepositAmount * 100);
         vm.assume(_sender != address(0));
+        vm.assume(destinationDex != SPOT_DEX_ID);
 
         // Mock user exists (returns true)
         _mockCoreUserExists(_sender, true);
 
         // Setup tokens for sender
         _setupTokenMintAndApprove(_sender, evmDepositAmount);
-        vm.startPrank(_sender);
+        _enableDestinationDex(destinationDex);
 
         // Expect full amount to be sent (no fee deduction)
         bytes memory expectedData = _buildCoreWriterAction(
             _sender,
-            evmDepositAmount
+            evmDepositAmount,
+            destinationDex
         );
 
         vm.expectCall(
@@ -1485,16 +1969,19 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.expectEmit(true, true, true, true);
         emit SendAsset(_sender, coreScaledAmount);
 
-        coreDepositWallet.deposit(evmDepositAmount);
+        vm.startPrank(_sender);
+        coreDepositWallet.deposit(evmDepositAmount, destinationDex);
         vm.stopPrank();
     }
 
     function testDeposit_newUser_feeApplied(
         address _sender,
         uint256 evmDepositAmount,
-        uint64 coreFee
+        uint64 coreFee,
+        uint32 destinationDex
     ) public {
         vm.assume(_sender != address(0));
+        vm.assume(destinationDex != SPOT_DEX_ID);
 
         // Use helper to bound deposit and fee with valid relationship
         (uint256 evmAmount, uint64 fee) = _boundDepositAndFee(
@@ -1511,6 +1998,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         // Mock user does NOT exist (returns false)
         _mockCoreUserExists(_sender, false);
 
+        // Enable destination dex
+        _enableDestinationDex(destinationDex);
+
         // Setup tokens for sender
         _setupTokenMintAndApprove(_sender, evmAmount);
         vm.startPrank(_sender);
@@ -1519,8 +2009,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         bytes memory expectedPayload = abi.encode(
             _sender,
             address(0),
-            type(uint32).max,
-            uint32(0),
+            SPOT_DEX_ID,
+            destinationDex,
             uint64(0),
             coreNetScaledAmount
         );
@@ -1556,15 +2046,17 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.expectEmit(true, true, true, true);
         emit SendAsset(_sender, coreNetScaledAmount);
 
-        coreDepositWallet.deposit(evmAmount);
+        coreDepositWallet.deposit(evmAmount, destinationDex);
         vm.stopPrank();
     }
 
     function testDeposit_newUser_insufficientAmount_reverts(
         address _sender,
         uint256 evmDepositAmount,
-        uint64 coreFee
+        uint64 coreFee,
+        uint32 destinationDex
     ) public {
+        vm.assume(destinationDex != SPOT_DEX_ID);
         vm.assume(_sender != address(0));
         // Bound fee (core units) so that there exist deposits with 100*deposit <= fee
         coreFee = uint64(bound(uint256(coreFee), 100, type(uint64).max));
@@ -1575,6 +2067,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.prank(coreDepositWalletOwner);
         coreDepositWallet.updateNewCoreAccountFee(coreFee);
 
+        // Enable destination dex
+        _enableDestinationDex(destinationDex);
+
         // Mock user does NOT exist (returns false)
         _mockCoreUserExists(_sender, false);
 
@@ -1584,14 +2079,17 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Should revert with insufficient amount
         vm.expectRevert("Amount must exceed new account fee");
-        coreDepositWallet.deposit(evmDepositAmount);
+        coreDepositWallet.deposit(evmDepositAmount, destinationDex);
         vm.stopPrank();
     }
 
     function testDeposit_newUser_exactFeeAmount_reverts(
         address _sender,
-        uint64 coreFee
+        uint64 coreFee,
+        uint32 destinationDex
     ) public {
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
         // Bound fee (core units) so that depositAmount = coreFee/100 is valid
         coreFee = uint64(bound(uint256(coreFee), 100, type(uint64).max));
         vm.assume(_sender != address(0));
@@ -1603,6 +2101,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         // Mock user does NOT exist (returns false)
         _mockCoreUserExists(_sender, false);
 
+        // Enable destination dex
+        _enableDestinationDex(destinationDex);
+
         // Setup tokens for sender
         uint256 evmDepositAmount = coreFee / 100;
         _setupTokenMintAndApprove(_sender, evmDepositAmount);
@@ -1610,19 +2111,21 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Should revert when amount equals fee (no net amount)
         vm.expectRevert("Amount must exceed new account fee");
-        coreDepositWallet.deposit(evmDepositAmount);
+        coreDepositWallet.deposit(evmDepositAmount, destinationDex);
         vm.stopPrank();
     }
 
     function testDeposit_newUser_zeroFee_noFeeLogic(
         address _sender,
-        uint256 evmDepositAmount
+        uint256 evmDepositAmount,
+        uint32 destinationDex
     ) public {
         // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
         evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
         uint64 coreScaledAmount = uint64(evmDepositAmount * 100);
         uint64 coreFee = 0; // 0 USDC (core token units)
         vm.assume(_sender != address(0));
+        vm.assume(destinationDex != SPOT_DEX_ID);
 
         // Set fee to 0 for this test
         vm.prank(coreDepositWalletOwner);
@@ -1633,12 +2136,14 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Setup tokens for sender
         _setupTokenMintAndApprove(_sender, evmDepositAmount);
+        _enableDestinationDex(destinationDex);
         vm.startPrank(_sender);
 
         // Expect full amount to be sent (no fee)
         bytes memory expectedData = _buildCoreWriterAction(
             _sender,
-            evmDepositAmount
+            evmDepositAmount,
+            destinationDex
         );
         vm.expectCall(
             CORE_WRITER_ADDRESS,
@@ -1657,7 +2162,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.expectEmit(true, true, true, true);
         emit SendAsset(_sender, coreScaledAmount);
 
-        coreDepositWallet.deposit(evmDepositAmount);
+        coreDepositWallet.deposit(evmDepositAmount, destinationDex);
         vm.stopPrank();
     }
 
@@ -1700,7 +2205,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         bytes memory expectedPayload = abi.encode(
             _sender,
             address(0),
-            type(uint32).max,
+            SPOT_DEX_ID,
             uint32(0),
             uint64(0),
             coreScaledNetAmount
@@ -1746,18 +2251,21 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             bytes32(uint256(1)),
             27,
             bytes32(uint256(2)),
-            bytes32(uint256(3))
+            bytes32(uint256(3)),
+            PERP_DEX_ID
         );
     }
 
     function testDepositWithAuth_existingUser_noFeeApplied(
         address _sender,
-        uint256 evmDepositAmount
+        uint256 evmDepositAmount,
+        uint32 destinationDex
     ) public {
         // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
         evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
         uint64 coreScaledAmount = uint64(evmDepositAmount * 100); // scaled core amount
         vm.assume(_sender != address(0));
+        vm.assume(destinationDex != SPOT_DEX_ID);
 
         // Existing user
         _mockCoreUserExists(_sender, true);
@@ -1771,11 +2279,13 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             ),
             abi.encode()
         );
+        _enableDestinationDex(destinationDex);
 
         // Expect CoreWriter call with full amount
         bytes memory expectedData = _buildCoreWriterAction(
             _sender,
-            evmDepositAmount
+            evmDepositAmount,
+            destinationDex
         );
         vm.expectCall(
             CORE_WRITER_ADDRESS,
@@ -1802,7 +2312,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             bytes32(uint256(1)),
             27,
             bytes32(uint256(2)),
-            bytes32(uint256(3))
+            bytes32(uint256(3)),
+            destinationDex
         );
     }
 
@@ -1841,7 +2352,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             bytes32(uint256(1)),
             27,
             bytes32(uint256(2)),
-            bytes32(uint256(3))
+            bytes32(uint256(3)),
+            PERP_DEX_ID
         );
     }
 
@@ -1876,16 +2388,19 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             bytes32(uint256(1)),
             27,
             bytes32(uint256(2)),
-            bytes32(uint256(3))
+            bytes32(uint256(3)),
+            PERP_DEX_ID
         );
     }
 
     function testDepositWithAuth_newUser_zeroFee_noFeeLogic(
         address _sender,
-        uint256 evmDepositAmount
+        uint256 evmDepositAmount,
+        uint32 destinationDex
     ) public {
         vm.assume(_sender != address(0));
         evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        vm.assume(destinationDex != SPOT_DEX_ID);
         uint64 coreScaledAmount = uint64(evmDepositAmount * 100);
 
         // Set fee to 0 and mark as new user
@@ -1902,11 +2417,13 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             ),
             abi.encode()
         );
+        _enableDestinationDex(destinationDex);
 
         // Expect full amount
         bytes memory expectedData = _buildCoreWriterAction(
             _sender,
-            evmDepositAmount
+            evmDepositAmount,
+            destinationDex
         );
         vm.expectCall(
             CORE_WRITER_ADDRESS,
@@ -1933,11 +2450,124 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             bytes32(uint256(1)),
             27,
             bytes32(uint256(2)),
-            bytes32(uint256(3))
+            bytes32(uint256(3)),
+            destinationDex
         );
     }
 
-    function testPrecompileCall_failure_reverts(uint256 depositAmount) public {
+    function testDepositWithAuth_depositsToSpotIfDexForwardingDisabled(address _sender, uint256 _amount) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+
+        // Disable dex forwarding
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.disableDexForwarding();
+
+        // Validate dex forwarding is disabled, and perp dex is enabled
+        assertTrue(coreDepositWallet.isDexForwardingDisabled());
+        assertTrue(coreDepositWallet.enabledDestinationDexes(PERP_DEX_ID));
+
+        // Mint tokens to the sender
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
+
+        // Check that the Transfer event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            _sender,
+            TOKEN_SYSTEM_ADDRESS,
+            _amount
+        );
+
+        // Start recording logs.
+        vm.recordLogs();
+
+        // Deposit tokens into the CoreDepositWallet
+        vm.prank(_sender);
+        coreDepositWallet.depositWithAuth(
+            _amount,
+            0,
+            1,
+            bytes32("nonce"),
+            0,
+            bytes32("s"),
+            bytes32("v"),
+            PERP_DEX_ID
+        );
+
+        _assertSuccessfulDepositWithAuthToSpot(_amount);
+    }
+
+    function testDepositWithAuth_depositsToSpotIfDexIsSpot(address _sender, uint256 _amount) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+
+        // Mint tokens to the sender
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
+
+        // Check that the Transfer event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            _sender,
+            TOKEN_SYSTEM_ADDRESS,
+            _amount
+        );
+
+        // Start recording logs.
+        vm.recordLogs();
+
+        // Deposit tokens into the CoreDepositWallet
+        vm.prank(_sender);
+        coreDepositWallet.depositWithAuth(
+            _amount,
+            0,
+            1,
+            bytes32("nonce"),
+            0,
+            bytes32("s"),
+            bytes32("v"),
+            SPOT_DEX_ID
+        );
+
+        _assertSuccessfulDepositWithAuthToSpot(_amount);
+    }
+
+    function testDepositWithAuth_depositsToSpotIfDexIsDisabled(address _sender, uint256 _amount, uint32 destinationDex) public {
+        vm.assume(_amount > 0);
+        vm.assume(_sender != address(0));
+
+        // Mint tokens to the sender
+        MockDepositableToken(TOKEN).mint(_sender, _amount);
+
+        // Check that the Transfer event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit Transfer(
+            _sender,
+            TOKEN_SYSTEM_ADDRESS,
+            _amount
+        );
+
+        // Start recording logs.
+        vm.recordLogs();
+
+        // Deposit tokens into the CoreDepositWallet
+        vm.prank(_sender);
+        coreDepositWallet.depositWithAuth(
+            _amount,
+            0,
+            1,
+            bytes32("nonce"),
+            0,
+            bytes32("s"),
+            bytes32("v"),
+            SPOT_DEX_ID
+        );
+
+        _assertSuccessfulDepositWithAuthToSpot(_amount);
+    }
+
+    function testPrecompileCall_failure_reverts(uint256 depositAmount, uint32 destinationDex) public {
+        vm.assume(destinationDex != SPOT_DEX_ID);
+        
         address recipient = address(0x123);
         // Bound: 1 <= depositAmount <= type(uint64).max / 100 to avoid scaling overflow
         depositAmount = bound(depositAmount, 1, type(uint64).max / 100);
@@ -1949,12 +2579,15 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             "Precompile error"
         );
 
+        // Enable destination dex
+        _enableDestinationDex(destinationDex);
+
         // Mock token operations
         _setupTokenMintAndApprove(address(this), depositAmount);
 
         // Should revert with precompile error
         vm.expectRevert("Core user exists precompile call failed");
-        coreDepositWallet.depositFor(recipient, depositAmount);
+        coreDepositWallet.depositFor(recipient, depositAmount, destinationDex);
     }
 
     function testUpdateNewCoreAccountFee_multipleTimes() public {
@@ -1984,7 +2617,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         assertEq(uint256(coreDepositWallet.newCoreAccountFee()), uint256(fee3));
     }
 
-    function testDeposit_newUser_minimalViableAmount(uint64 coreFee) public {
+    function testDeposit_newUser_minimalViableAmount(uint64 coreFee, uint32 destinationDex) public {
+        vm.assume(destinationDex != SPOT_DEX_ID);
+
         // Bound fee (core units)
         uint256 maxDeposit = type(uint64).max / 100;
         coreFee = uint64(bound(coreFee, 1, maxDeposit * 100 - 1));
@@ -2005,6 +2640,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             abi.encode(recipient),
             abi.encode(false)
         );
+
+        // Enable destination dex
+        _enableDestinationDex(destinationDex);
 
         // Mock token operations
         _setupTokenMintAndApprove(address(this), depositAmount);
@@ -2027,6 +2665,6 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         // Expect SendAsset event with scaled net amount (after fee)
         vm.expectEmit(true, true, true, true);
         emit SendAsset(recipient, coreScaledNetAmount); // scaled core net amount
-        coreDepositWallet.depositFor(recipient, depositAmount);
+        coreDepositWallet.depositFor(recipient, depositAmount, destinationDex);
     }
 }

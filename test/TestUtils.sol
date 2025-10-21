@@ -46,6 +46,9 @@ contract TestUtils is Test {
 
     event Initialized(uint64 version);
 
+    uint32 constant PERP_DEX_ID = 0;
+    uint32 constant SPOT_DEX_ID = type(uint32).max;
+
     function assertContractIsPausable(
         address _pausableContractAddress,
         address _currentPauser,

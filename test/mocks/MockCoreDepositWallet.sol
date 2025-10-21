@@ -22,11 +22,12 @@ import {ICoreDepositWallet} from "../../src/interfaces/ICoreDepositWallet.sol";
 contract MockCoreDepositWallet is ICoreDepositWallet {
     constructor() {}
 
-    function deposit(uint256 amount) external override {}
+    function deposit(uint256 amount, uint32 destinationDex) external override {}
 
     function depositFor(
         address recipient,
-        uint256 amount
+        uint256 amount,
+        uint32 destinationDex
     ) external override {}
 
     function depositWithAuth(
@@ -36,7 +37,8 @@ contract MockCoreDepositWallet is ICoreDepositWallet {
         bytes32 nonce,
         uint8 v,
         bytes32 r,
-        bytes32 s
+        bytes32 s,
+        uint32 destinationDex
     ) external override {}
 
     function transfer(address to, uint256 amount) external override returns (bool success) {

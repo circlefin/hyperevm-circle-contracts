@@ -27,8 +27,9 @@ interface ICoreDepositWallet is IForwardDepositReceiver {
     /**
      * @notice Deposits tokens for the sender.
      * @param amount The amount of tokens being deposited.
+     * @param destinationDex The destination dex on HyperCore.
      */
-    function deposit(uint256 amount) external;
+    function deposit(uint256 amount, uint32 destinationDex) external;
 
     /**
      * @notice Handles the token transfer from the ICoreDepositWallet to the recipient.
@@ -47,6 +48,7 @@ interface ICoreDepositWallet is IForwardDepositReceiver {
      * @param v The V value of the signature.
      * @param r The R value of the signature.
      * @param s The S value of the signature.
+     * @param destinationDex The destination dex on HyperCore.
      */
     function depositWithAuth(
         uint256 amount,
@@ -55,6 +57,7 @@ interface ICoreDepositWallet is IForwardDepositReceiver {
         bytes32 authNonce,
         uint8 v,
         bytes32 r,
-        bytes32 s
+        bytes32 s,
+        uint32 destinationDex
     ) external;
 }
