@@ -44,4 +44,6 @@ contract MockCoreDepositWallet is ICoreDepositWallet {
     function transfer(address to, uint256 amount) external override returns (bool success) {
         return true;
     }
+
+    function coreReceiveWithData(address from, bytes32 destinationRecipient, uint32 destinationChainId, uint256 amount, bytes calldata data) external override {}
 }

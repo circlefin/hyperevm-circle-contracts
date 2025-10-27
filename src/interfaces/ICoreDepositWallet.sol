@@ -40,6 +40,17 @@ interface ICoreDepositWallet is IForwardDepositReceiver {
     function transfer(address to, uint256 amount) external returns (bool success);
 
     /**
+     * @notice Handles the token transfer from the CoreDepositWallet to the recipient and initiates a cross-chain burn via CCTP.
+     * @dev This function can only be called by the token's system address.
+     * @param from The Hypercore address debited by the cross-chain withdrawal.
+     * @param destinationRecipient The address receiving the minted tokens on the destination chain, as bytes32
+     * @param destinationChainId The CCTP domain ID of the destination chain.
+     * @param amount The amount of tokens being transferred.
+     * @param data Optional additional data. If provided, it is used in depositForBurnWithHook; otherwise, a default hook is created to request a relay on the destination chain.
+     */
+    function coreReceiveWithData(address from, bytes32 destinationRecipient, uint32 destinationChainId, uint256 amount, bytes calldata data) external;
+
+    /**
      * @notice Deposits tokens with authorization.
      * @param amount The amount of tokens being deposited.
      * @param authValidAfter The timestamp after which the authorization is valid.

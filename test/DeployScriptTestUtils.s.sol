@@ -48,6 +48,8 @@ contract DeployScriptTestUtils is Test {
     // =========================== Test Constants ============================
     // CoreDepositWallet
     address public TOKEN_SYSTEM_ADDRESS = address(0x1111);
+    uint32 public CCTP_FINALIZED_THRESHOLD = 2000;
+    uint256 public CCTP_FEE_LIMIT = type(uint32).max;
 
     // CctpForwarder
     uint32 public MESSAGE_VERSION = 1;
@@ -106,6 +108,7 @@ contract DeployScriptTestUtils is Test {
         );
         vm.setEnv("TOKEN_CONTRACT_ADDRESS", vm.toString(TOKEN));
         vm.setEnv("TOKEN_SYSTEM_ADDRESS", vm.toString(TOKEN_SYSTEM_ADDRESS));
+        vm.setEnv("TOKEN_MESSENGER_ADDRESS", vm.toString(TOKEN_MESSENGER));
         vm.setEnv(
             "CORE_DEPOSIT_WALLET_PROXY_ADMIN_ADDRESS",
             vm.toString(coreDepositWalletProxyAdmin)

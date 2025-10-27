@@ -43,6 +43,12 @@ contract DeployCoreDepositWalletTest is DeployScriptTestUtils {
             address(TOKEN_SYSTEM_ADDRESS)
         );
 
+        // check token messenger address
+        assertEq(
+            address(coreDepositWalletImpl.tokenMessenger()),
+            address(TOKEN_MESSENGER)
+        );
+
         // verify initializers are disabled
         vm.expectRevert("Initializable: invalid initialization");
         coreDepositWalletImpl.initialize(
@@ -59,7 +65,8 @@ contract DeployCoreDepositWalletTest is DeployScriptTestUtils {
             .coreDepositWalletImpl(
                 address(create2Factory),
                 TOKEN,
-                TOKEN_SYSTEM_ADDRESS
+                TOKEN_SYSTEM_ADDRESS,
+                TOKEN_MESSENGER
             );
         assertEq(
             address(coreDepositWalletImpl),

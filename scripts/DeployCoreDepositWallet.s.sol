@@ -34,6 +34,7 @@ contract DeployCoreDepositWalletScript is Script {
     // Constructor arguments
     address private tokenContractAddress;
     address private tokenSystemAddress;
+    address private tokenMessengerAddress;
 
     // Init params
     address private coreDepositWalletProxyAdminAddress;
@@ -52,7 +53,7 @@ contract DeployCoreDepositWalletScript is Script {
                 SALT_CORE_DEPOSIT_WALLET,
                 abi.encodePacked(
                     type(CoreDepositWallet).creationCode,
-                    abi.encode(tokenContractAddress, tokenSystemAddress)
+                    abi.encode(tokenContractAddress, tokenSystemAddress, tokenMessengerAddress)
                 )
             )
         );
@@ -122,6 +123,7 @@ contract DeployCoreDepositWalletScript is Script {
         // CoreDepositWallet constructor arguments
         tokenContractAddress = vm.envAddress("TOKEN_CONTRACT_ADDRESS");
         tokenSystemAddress = vm.envAddress("TOKEN_SYSTEM_ADDRESS");
+        tokenMessengerAddress = vm.envAddress("TOKEN_MESSENGER_ADDRESS");
 
         // CoreDepositWallet init params
         coreDepositWalletProxyAdminAddress = vm.envAddress(

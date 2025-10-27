@@ -46,7 +46,8 @@ contract PredictCreate2Deployments is Script {
     function coreDepositWalletImpl(
         address create2Factory,
         address tokenContractAddress,
-        address tokenSystemAddress
+        address tokenSystemAddress,
+        address tokenMessengerAddress
     ) public returns (address) {
         return
             vm.computeCreate2Address(
@@ -54,7 +55,7 @@ contract PredictCreate2Deployments is Script {
                 keccak256(
                     abi.encodePacked(
                         type(CoreDepositWallet).creationCode,
-                        abi.encode(tokenContractAddress, tokenSystemAddress)
+                        abi.encode(tokenContractAddress, tokenSystemAddress, tokenMessengerAddress)
                     )
                 ),
                 create2Factory

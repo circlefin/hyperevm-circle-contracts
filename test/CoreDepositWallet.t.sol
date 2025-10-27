@@ -36,6 +36,14 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     event Withdraw(address indexed to, uint256 value);
 
+    event CrossChainWithdraw(address indexed from, bytes32 indexed to, uint256 value, uint32 destinationDomain);
+
+    event CctpMaxFeeUpdated(uint256 previousFee, uint256 newFee);
+
+    event CctpDefaultForwardFeeUpdated(uint256 previousFee, uint256 newFee);
+
+    event CctpForwardFeeUpdated(uint32 destinationDomain, uint256 previousFee, uint256 newFee);
+
     event SendRawAction(address indexed user, bytes data);
 
     event SendAsset(address indexed coreRecipient, uint64 coreAmount);
@@ -80,6 +88,10 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     uint64 private constant DEFAULT_NEW_CORE_ACCOUNT_FEE = 100000000; // 1 USDC (8 decimals)
     uint256 private constant CORE_SCALING_FACTOR = 100; // 6 decimals -> 8 decimals
     uint256 private constant MAX_TRANSFER_VALUE_FROM_EVM = 184467440737095516; // type(uint64.max) / 100;
+
+    uint256 private constant CCTP_MAX_FEE = 0;
+    uint256 private constant CCTP_DEFAULT_FORWARD_FEE = 200000; // 0.2 USDC (6 decimals)
+    bytes private constant CCTP_FORWARD_HOOK_MAGIC_BYTES = abi.encodePacked(bytes32(0x636374702d666f72776172640000000000000000000000000000000000000000)); // "cctp-forward"
 
     function setUp() public {
         _deployCreate2Factory();
@@ -342,7 +354,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         // Deploy v2 implementation
         MockCoreDepositWalletV2 _implV2 = new MockCoreDepositWalletV2(
             TOKEN,
-            newTokenSystemAddress
+            newTokenSystemAddress,
+            TOKEN_MESSENGER
         );
 
         // Upgrade
@@ -360,12 +373,17 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     function testConstructor_revertsIfTokenIsZeroAddress() public {
         vm.expectRevert("Invalid tokenAddress: zero address");
-        new CoreDepositWallet(address(0), TOKEN_SYSTEM_ADDRESS);
+        new CoreDepositWallet(address(0), TOKEN_SYSTEM_ADDRESS, TOKEN_MESSENGER);
     }
 
     function testConstructor_revertsIfTokenSystemAddressIsZeroAddress() public {
         vm.expectRevert("Invalid _tokenSystemAddress: zero address");
-        new CoreDepositWallet(TOKEN, address(0));
+        new CoreDepositWallet(TOKEN, address(0), TOKEN_MESSENGER);
+    }
+
+    function testConstructor_revertsIfTokenMessengerAddressIsZeroAddress() public {
+        vm.expectRevert("Invalid tokenMessengerAddress: zero address");
+        new CoreDepositWallet(TOKEN, TOKEN_SYSTEM_ADDRESS, address(0));
     }
 
     // Ownable tests
@@ -1297,6 +1315,269 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         vm.expectRevert("Pausable: paused");
         coreDepositWallet.transfer(_to, _amount);
+    }
+
+    function testCoreReceiveWithData_succeeds(
+        address _from,
+        bytes32 _destinationRecipient,
+        uint32 _destinationChainId,
+        uint256 _amount
+    ) public {
+        vm.assume(_from != address(0));
+        _amount = bound(_amount, CCTP_DEFAULT_FORWARD_FEE + 1, type(uint256).max);
+
+        // Check that the CrossChainWithdraw event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit CrossChainWithdraw(_from, _destinationRecipient, _amount, _destinationChainId);
+
+        // Expect exact depositForBurn calldata
+        bytes memory depositForBurnCall = abi.encodeWithSignature(
+            "depositForBurnWithHook(uint256,uint32,bytes32,address,bytes32,uint256,uint32,bytes)",
+            _amount,
+            _destinationChainId,
+            _destinationRecipient,
+            address(TOKEN),
+            bytes32(0),
+            CCTP_DEFAULT_FORWARD_FEE,
+            CCTP_FINALIZED_THRESHOLD,
+            CCTP_FORWARD_HOOK_MAGIC_BYTES
+        );
+        
+        vm.mockCall(TOKEN_MESSENGER, depositForBurnCall, abi.encode());
+        vm.expectCall(TOKEN_MESSENGER, depositForBurnCall, uint64(1));
+
+        // Transfer tokens via depositForBurn
+        vm.prank(TOKEN_SYSTEM_ADDRESS);
+        coreDepositWallet.coreReceiveWithData(_from, _destinationRecipient, _destinationChainId, _amount, "");
+    }
+
+    function testCoreReceiveWithData_succeedsWithData(
+        address _from,
+        bytes32 _destinationRecipient,
+        uint32 _destinationChainId,
+        uint256 _amount,
+        bytes memory _data
+    ) public {
+        vm.assume(_from != address(0));
+        _amount = bound(_amount, CCTP_MAX_FEE + 1, type(uint256).max);
+        vm.assume(_data.length > 0);
+
+        // Check that the CrossChainWithdraw event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit CrossChainWithdraw(_from, _destinationRecipient, _amount, _destinationChainId);
+
+        // Expect exact depositForBurn calldata
+        bytes memory depositForBurnCall = abi.encodeWithSignature(
+            "depositForBurnWithHook(uint256,uint32,bytes32,address,bytes32,uint256,uint32,bytes)",
+            _amount,
+            _destinationChainId,
+            _destinationRecipient,
+            address(TOKEN),
+            bytes32(0),
+            CCTP_MAX_FEE,
+            CCTP_FINALIZED_THRESHOLD,
+            _data
+        );
+        
+        vm.mockCall(TOKEN_MESSENGER, depositForBurnCall, abi.encode());
+        vm.expectCall(TOKEN_MESSENGER, depositForBurnCall, uint64(1));
+
+        // Transfer tokens via depositForBurn
+        vm.prank(TOKEN_SYSTEM_ADDRESS);
+        coreDepositWallet.coreReceiveWithData(_from, _destinationRecipient, _destinationChainId, _amount, _data);
+    }
+
+    function testCoreReceiveWithData_succeedsWithNonDefaultForwardFee(
+        address _from,
+        bytes32 _destinationRecipient,
+        uint32 _destinationChainId,
+        uint256 _amount
+    ) public {
+        vm.assume(_from != address(0));
+        uint256 customForwardFee = 2 * CCTP_DEFAULT_FORWARD_FEE;
+        _amount = bound(_amount, customForwardFee + 1, type(uint256).max);
+
+        // Modify CoreDepositWallet to use custom forward fee for this test
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateCctpForwardFee(_destinationChainId, customForwardFee);
+
+        // Check that the CrossChainWithdraw event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit CrossChainWithdraw(_from, _destinationRecipient, _amount, _destinationChainId);
+
+        // Expect exact depositForBurn calldata
+        bytes memory depositForBurnCall = abi.encodeWithSignature(
+            "depositForBurnWithHook(uint256,uint32,bytes32,address,bytes32,uint256,uint32,bytes)",
+            _amount,
+            _destinationChainId,
+            _destinationRecipient,
+            address(TOKEN),
+            bytes32(0),
+            customForwardFee,
+            CCTP_FINALIZED_THRESHOLD,
+            CCTP_FORWARD_HOOK_MAGIC_BYTES
+        );
+        
+        vm.mockCall(TOKEN_MESSENGER, depositForBurnCall, abi.encode());
+        vm.expectCall(TOKEN_MESSENGER, depositForBurnCall, uint64(1));
+
+        // Transfer tokens via depositForBurn
+        vm.prank(TOKEN_SYSTEM_ADDRESS);
+        coreDepositWallet.coreReceiveWithData(_from, _destinationRecipient, _destinationChainId, _amount, "");
+    }
+
+    function testCoreReceiveWithData_succeedsWithZeroForwardFee(
+        address _from,
+        bytes32 _destinationRecipient,
+        uint32 _destinationChainId,
+        uint256 _amount
+    ) public {
+        vm.assume(_from != address(0));
+        _amount = bound(_amount, 1, type(uint256).max);
+
+        // Modify CoreDepositWallet to use zero forward fee for this test
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateCctpForwardFee(_destinationChainId, 0);
+
+        // Check that the CrossChainWithdraw event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit CrossChainWithdraw(_from, _destinationRecipient, _amount, _destinationChainId);
+
+        // Expect exact depositForBurn calldata
+        bytes memory depositForBurnCall = abi.encodeWithSignature(
+            "depositForBurnWithHook(uint256,uint32,bytes32,address,bytes32,uint256,uint32,bytes)",
+            _amount,
+            _destinationChainId,
+            _destinationRecipient,
+            address(TOKEN),
+            bytes32(0),
+            0,
+            CCTP_FINALIZED_THRESHOLD,
+            CCTP_FORWARD_HOOK_MAGIC_BYTES
+        );
+        
+        vm.mockCall(TOKEN_MESSENGER, depositForBurnCall, abi.encode());
+        vm.expectCall(TOKEN_MESSENGER, depositForBurnCall, uint64(1));
+
+        // Transfer tokens via depositForBurn
+        vm.prank(TOKEN_SYSTEM_ADDRESS);
+        coreDepositWallet.coreReceiveWithData(_from, _destinationRecipient, _destinationChainId, _amount, "");
+    }
+
+    function testCoreReceiveWithData_succeedsWithNonDefaultForwardAndMaxFee(
+        address _from,
+        bytes32 _destinationRecipient,
+        uint32 _destinationChainId,
+        uint256 _amount
+    ) public {
+        vm.assume(_from != address(0));
+        uint256 customMaxFee = 100;
+        uint256 customForwardFee = 2 * CCTP_DEFAULT_FORWARD_FEE;
+        _amount = bound(_amount, customMaxFee + customForwardFee + 1, type(uint256).max);
+
+        // Modify CoreDepositWallet to use custom forward and max fee for this test
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateCctpForwardFee(_destinationChainId, customForwardFee);
+
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateCctpMaxFee(customMaxFee);
+
+        // Check that the CrossChainWithdraw event was emitted
+        vm.expectEmit(true, true, true, true);
+        emit CrossChainWithdraw(_from, _destinationRecipient, _amount, _destinationChainId);
+
+        // Expect exact depositForBurn calldata
+        bytes memory depositForBurnCall = abi.encodeWithSignature(
+            "depositForBurnWithHook(uint256,uint32,bytes32,address,bytes32,uint256,uint32,bytes)",
+            _amount,
+            _destinationChainId,
+            _destinationRecipient,
+            address(TOKEN),
+            bytes32(0),
+            customForwardFee + customMaxFee,
+            CCTP_FINALIZED_THRESHOLD,
+            CCTP_FORWARD_HOOK_MAGIC_BYTES
+        );
+        
+        vm.mockCall(TOKEN_MESSENGER, depositForBurnCall, abi.encode());
+        vm.expectCall(TOKEN_MESSENGER, depositForBurnCall, uint64(1));
+
+        // Transfer tokens via depositForBurn
+        vm.prank(TOKEN_SYSTEM_ADDRESS);
+        coreDepositWallet.coreReceiveWithData(_from, _destinationRecipient, _destinationChainId, _amount, "");
+    }
+
+    function testCoreReceiveWithData_revertsWhenSenderIsNotSystemAddress(
+        address _from,
+        bytes32 _destinationRecipient,
+        uint32 _destinationChainId,
+        uint256 _amount
+    ) public {
+        vm.assume(_from != TOKEN_SYSTEM_ADDRESS);
+        vm.assume(_from != address(0));
+        _amount = bound(_amount, CCTP_DEFAULT_FORWARD_FEE + 1, type(uint256).max);
+
+        // Attempt to call coreReceiveWithData from non-system address
+        vm.prank(_from);
+        vm.expectRevert("Caller is not the system address");
+        coreDepositWallet.coreReceiveWithData(_from, _destinationRecipient, _destinationChainId, _amount, "");
+    }
+
+    function testCoreReceiveWithData_revertsWhenTokenApprovalFails(
+        address _from,
+        bytes32 _destinationRecipient,
+        uint32 _destinationChainId,
+        uint256 _amount
+    ) public {
+        vm.assume(_from != address(0));
+        _amount = bound(_amount, CCTP_DEFAULT_FORWARD_FEE + 1, type(uint256).max);
+
+        // Mock token approval failure
+        bytes memory approvalCall = abi.encodeWithSignature(
+            "approve(address,uint256)",
+            TOKEN_MESSENGER,
+            _amount
+        );
+        vm.mockCall(TOKEN, approvalCall, abi.encode(false));
+
+        // Attempt to call coreReceiveWithData from non-system address
+        vm.prank(TOKEN_SYSTEM_ADDRESS);
+        vm.expectRevert("Token approval failed");
+        coreDepositWallet.coreReceiveWithData(_from, _destinationRecipient, _destinationChainId, _amount, "");
+    }
+
+    function testCoreReceiveWithData_revertsWhenAmountIsLessThanMaxFee(
+        address _from,
+        bytes32 _destinationRecipient,
+        uint32 _destinationChainId,
+        uint256 _amount
+    ) public {
+        vm.assume(_from != address(0));
+        _amount = bound(_amount, 0, CCTP_DEFAULT_FORWARD_FEE);
+
+        // Attempt to call coreReceiveWithData with insufficient amount
+        vm.prank(TOKEN_SYSTEM_ADDRESS);
+        vm.expectRevert("Amount must exceed maxFee");
+        coreDepositWallet.coreReceiveWithData(_from, _destinationRecipient, _destinationChainId, _amount, "");
+    }
+
+    function testCoreReceiveWithData_revertsWhenPaused(
+        address _from,
+        bytes32 _destinationRecipient,
+        uint32 _destinationChainId,
+        uint256 _amount
+    ) public {
+        vm.assume(_from != address(0));
+       _amount = bound(_amount, CCTP_DEFAULT_FORWARD_FEE + 1, type(uint256).max);
+
+        vm.prank(coreDepositWalletPauser);
+        coreDepositWallet.pause();
+        assertTrue(coreDepositWallet.paused());
+
+        // Attempt to call coreReceiveWithData when paused
+        vm.prank(TOKEN_SYSTEM_ADDRESS);
+        vm.expectRevert("Pausable: paused");
+        coreDepositWallet.coreReceiveWithData(_from, _destinationRecipient, _destinationChainId, _amount, "");
     }
 
     function testSendAssetEncoding_matchesSpec(
@@ -2565,5 +2846,145 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.expectEmit(true, true, true, true);
         emit SendAsset(recipient, coreScaledNetAmount); // scaled core net amount
         coreDepositWallet.depositFor(recipient, depositAmount, destinationDex);
+    }
+
+    function testUpdateCctpForwardFee_succeeds(uint32 destinationDomain, uint256 newFee, uint256 secondNewFee) public {
+        newFee = bound(newFee, 0, CCTP_FEE_LIMIT);
+        secondNewFee = bound(secondNewFee, 0, CCTP_FEE_LIMIT);
+
+        vm.expectEmit(true, true, true, true);
+        emit CctpForwardFeeUpdated(destinationDomain, 0, newFee);
+
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateCctpForwardFee(destinationDomain, newFee);
+
+        assertEq(
+            uint256(coreDepositWallet.cctpForwardFees(destinationDomain)),
+            uint256(newFee)
+        );
+
+        vm.expectEmit(true, true, true, true);
+        emit CctpForwardFeeUpdated(destinationDomain, newFee, secondNewFee);
+
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateCctpForwardFee(destinationDomain, secondNewFee);
+
+        assertEq(
+            uint256(coreDepositWallet.cctpForwardFees(destinationDomain)),
+            uint256(secondNewFee)
+        );
+    }
+
+    function testUpdateCctpForwardFee_revertsWhenSenderIsNotOwner(uint32 destinationDomain, uint256 newFee) public {
+        // Non-owner cannot update
+        vm.prank(address(0x999));
+        vm.expectRevert("Ownable: caller is not the owner");
+        coreDepositWallet.updateCctpForwardFee(destinationDomain, newFee);
+    }
+
+    function testUpdateCctpForwardFee_revertsWhenFeeExceedsMax(uint32 destinationDomain, uint256 newFee) public {
+        newFee = bound(newFee, CCTP_FEE_LIMIT + 1, type(uint256).max);
+
+        vm.prank(coreDepositWalletOwner);
+        vm.expectRevert("Forward fee exceeds fee limit");
+        coreDepositWallet.updateCctpForwardFee(destinationDomain, newFee);
+    }
+
+    function testUnsetCctpForwardFee_succeeds(uint32 destinationDomain, uint256 initialFee) public {
+        initialFee = bound(initialFee, 0, CCTP_FEE_LIMIT);
+
+        // First set a fee
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateCctpForwardFee(destinationDomain, initialFee);
+        assertEq(
+            uint256(coreDepositWallet.cctpForwardFees(destinationDomain)),
+            uint256(initialFee)
+        );
+
+        // Now unset it
+        vm.expectEmit(true, true, true, true);
+        emit CctpForwardFeeUpdated(destinationDomain, initialFee, 0);
+
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.unsetCctpForwardFee(destinationDomain);
+
+        assertEq(
+            uint256(coreDepositWallet.cctpForwardFees(destinationDomain)),
+            uint256(0)
+        );
+    }
+
+    function testUnsetCctpForwardFee_revertsWhenSenderIsNotOwner(uint32 destinationDomain) public {
+        // Non-owner cannot unset
+        vm.prank(address(0x999));
+        vm.expectRevert("Ownable: caller is not the owner");
+        coreDepositWallet.unsetCctpForwardFee(destinationDomain);
+    }
+
+    function testUnsetCctpForwardFee_revertsWhenFeeNotSet(uint32 destinationDomain) public {
+        // Unsetting when no fee set should revert
+        vm.prank(coreDepositWalletOwner);
+        vm.expectRevert("Forwarding fee not set");
+        coreDepositWallet.unsetCctpForwardFee(destinationDomain);
+    }
+    
+    function testUpdateCctpMaxFee_succeeds(uint256 newFee) public {
+        newFee = bound(newFee, 0, CCTP_FEE_LIMIT);
+
+        vm.expectEmit(true, true, true, true);
+        emit CctpMaxFeeUpdated(CCTP_MAX_FEE, newFee);
+
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateCctpMaxFee(newFee);
+
+        assertEq(
+            uint256(coreDepositWallet.cctpMaxFee()),
+            uint256(newFee)
+        );
+    }
+
+    function testUpdateCctpMaxFee_revertsWhenFeeExceedsMax(uint256 newFee) public {
+        newFee = bound(newFee, CCTP_FEE_LIMIT + 1, type(uint256).max);
+
+        vm.prank(coreDepositWalletOwner);
+        vm.expectRevert("Max fee exceeds fee limit");
+        coreDepositWallet.updateCctpMaxFee(newFee);
+    }
+
+    function testUpdateCctpMaxFee_revertsWhenSenderIsNotOwner(uint256 newFee) public {
+        // Non-owner cannot update
+        vm.prank(address(0x999));
+        vm.expectRevert("Ownable: caller is not the owner");
+        coreDepositWallet.updateCctpMaxFee(newFee);
+    }
+
+    function testUpdateCctpDefaultForwardFee_succeeds(uint256 newFee) public {
+        newFee = bound(newFee, 0, CCTP_FEE_LIMIT);
+
+        vm.expectEmit(true, true, true, true);
+        emit CctpDefaultForwardFeeUpdated(CCTP_DEFAULT_FORWARD_FEE, newFee);
+
+        vm.prank(coreDepositWalletOwner);
+        coreDepositWallet.updateCctpDefaultForwardFee(newFee);
+
+        assertEq(
+            uint256(coreDepositWallet.cctpDefaultForwardFee()),
+            uint256(newFee)
+        );
+    }
+
+    function testUpdateCctpDefaultForwardFee_revertsWhenFeeExceedsMax(uint256 newFee) public {
+        newFee = bound(newFee, CCTP_FEE_LIMIT + 1, type(uint256).max);
+
+        vm.prank(coreDepositWalletOwner);
+        vm.expectRevert("Forward fee exceeds fee limit");
+        coreDepositWallet.updateCctpDefaultForwardFee(newFee);
+    }
+
+    function testUpdateCctpDefaultForwardFee_revertsWhenSenderIsNotOwner(uint256 newFee) public {
+        // Non-owner cannot update
+        vm.prank(address(0x999));
+        vm.expectRevert("Ownable: caller is not the owner");
+        coreDepositWallet.updateCctpDefaultForwardFee(newFee);
     }
 }

@@ -21,8 +21,8 @@ pragma abicoder v2;
 import {CoreDepositWallet} from "../../src/CoreDepositWallet.sol";
 
 contract MockCoreDepositWalletV2 is CoreDepositWallet {
-    constructor(address managedTokenContractAddress, address _tokenSystemAddress)
-        CoreDepositWallet(managedTokenContractAddress, _tokenSystemAddress)
+    constructor(address managedTokenContractAddress, address _tokenSystemAddress, address _tokenMessengerAddress)
+        CoreDepositWallet(managedTokenContractAddress, _tokenSystemAddress, _tokenMessengerAddress)
     {}
 
     function v2Function() external pure returns (bool) {
