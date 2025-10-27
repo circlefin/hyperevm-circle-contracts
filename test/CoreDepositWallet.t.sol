@@ -79,6 +79,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     uint64 private constant DEFAULT_NEW_CORE_ACCOUNT_FEE = 100000000; // 1 USDC (8 decimals)
     uint256 private constant CORE_SCALING_FACTOR = 100; // 6 decimals -> 8 decimals
+    uint256 private constant MAX_TRANSFER_VALUE_FROM_EVM = 184467440737095516; // type(uint64.max) / 100;
 
     function setUp() public {
         _deployCreate2Factory();
@@ -200,7 +201,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     // Enable destinationDex if disabled
     function _enableDestinationDex(uint32 _destinationDex) internal {
-        if (!coreDepositWallet.enabledDestinationDexes(_destinationDex)) {
+        if (!coreDepositWallet.enabledDestinationDexes(_destinationDex) && _destinationDex != SPOT_DEX_ID) {
             vm.prank(coreDepositWalletOwner);
             coreDepositWallet.enableDex(_destinationDex);
         }
@@ -452,8 +453,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     }
 
     function testDeposit_succeeds(uint256 _amount, address _sender, uint32 destinationDex) public {
-        vm.assume(_amount > 0);
-        vm.assume(_amount <= type(uint64).max / 100); // Ensure scaled amount fits in uint64
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_sender != address(0));
         vm.assume(destinationDex != SPOT_DEX_ID);
 
@@ -493,21 +493,20 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
-    function testDeposit_succeedsWithMaxUint64Amount(address _sender, uint32 destinationDex) public {
-        uint256 amount = type(uint64).max / 100; // Max amount before scaling overflow
+    function testDeposit_succeedsWithMaxTransferAmount(address _sender, uint32 destinationDex) public {
         vm.assume(_sender != address(0));
-        uint64 coreScaledAmount = uint64(amount * 100); // scaled core amount
+        uint64 coreScaledAmount = uint64(MAX_TRANSFER_VALUE_FROM_EVM * 100); // scaled core amount
         vm.assume(destinationDex != SPOT_DEX_ID);
 
         // Arrange
-        _setupTokenMintAndApprove(_sender, amount);
+        _setupTokenMintAndApprove(_sender, MAX_TRANSFER_VALUE_FROM_EVM);
         _enableDestinationDex(destinationDex);
 
         // Expect Transfer and CoreWriter action
         vm.expectEmit(true, true, true, true);
-        emit Transfer(address(coreDepositWallet), TOKEN_SYSTEM_ADDRESS, amount);
+        emit Transfer(address(coreDepositWallet), TOKEN_SYSTEM_ADDRESS, MAX_TRANSFER_VALUE_FROM_EVM);
 
-        bytes memory expectedData = _buildCoreWriterAction(_sender, amount, destinationDex);
+        bytes memory expectedData = _buildCoreWriterAction(_sender, MAX_TRANSFER_VALUE_FROM_EVM, destinationDex);
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
 
@@ -517,18 +516,18 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Act
         vm.startPrank(_sender);
-        coreDepositWallet.deposit(amount, destinationDex);
+        coreDepositWallet.deposit(MAX_TRANSFER_VALUE_FROM_EVM, destinationDex);
         vm.stopPrank();
 
         // Assert balance
         assertEq(
             MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
-            amount
+            MAX_TRANSFER_VALUE_FROM_EVM
         );
     }
 
     function testDeposit_depositsToSpotIfDexForwardingDisabled(uint256 _amount, address _sender, uint32 destinationDex) public {
-        vm.assume(_amount > 0);
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_sender != address(0));
         vm.assume(destinationDex != SPOT_DEX_ID);
 
@@ -566,7 +565,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     }
 
     function testDeposit_depositsToSpotIfDexIsSpot(address _sender, uint256 _amount) public {
-        vm.assume(_amount > 0);
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_sender != address(0));
 
         // Setup tokens for sender
@@ -592,7 +591,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     }
 
     function testDeposit_depositsToSpotIfDexIsDisabled(uint256 _amount, address _sender, uint32 disabledDex) public {
-        vm.assume(_amount > 0);
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_sender != address(0));
 
         // Setup tokens for sender
@@ -620,48 +619,17 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         _assertSuccessfulDepositToSpot(_amount);
     }
 
-    function testDeposit_revertsOnUint256Overflow(
+    function testDeposit_revertsOnTransferAmountTooLarge(
         uint256 _amount,
         address _sender,
         uint32 destinationDex
     ) public {
         _amount = bound(
             _amount,
-            type(uint256).max / 100 + 1,
+            MAX_TRANSFER_VALUE_FROM_EVM + 1,
             type(uint256).max
-        ); // Will cause SafeMath multiplication overflow
-        vm.assume(_sender != address(0));
-        vm.assume(destinationDex != SPOT_DEX_ID);
-
-        // Enable destination dex
-        _enableDestinationDex(destinationDex);
-
-        // Mint tokens to the sender
-        MockDepositableToken(TOKEN).mint(_sender, _amount);
-        // Approve the CoreDepositWallet to spend the tokens
-        vm.startPrank(_sender);
-        MockDepositableToken(TOKEN).approve(
-            address(coreDepositWallet),
-            _amount
         );
-
-        // Expect revert due to SafeMath multiplication overflow
-        vm.expectRevert("SafeMath: multiplication overflow");
-        coreDepositWallet.deposit(_amount, destinationDex);
-        vm.stopPrank();
-    }
-
-    function testDeposit_revertsOnUint64Overflow(
-        uint256 _amount,
-        address _sender,
-        uint32 destinationDex
-    ) public {
-        vm.assume(
-            _amount > type(uint64).max / 100 &&
-                _amount <= type(uint256).max / 100
-        ); // Will cause SafeCast overflow after scaling
         vm.assume(_sender != address(0));
-        vm.assume(destinationDex != SPOT_DEX_ID);
 
         // Enable destination dex
         _enableDestinationDex(destinationDex);
@@ -676,8 +644,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             _amount
         );
 
-        // Expect revert due to SafeCast overflow
-        vm.expectRevert("SafeCast: value doesn't fit in 64 bits");
+        vm.expectRevert("Amount exceeds max transfer value from EVM");
         coreDepositWallet.deposit(_amount, destinationDex);
         vm.stopPrank();
     }
@@ -727,8 +694,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint256 _amount,
         uint32 destinationDex
     ) public {
-        vm.assume(_amount > 0);
-        vm.assume(_amount <= type(uint64).max / 100); // Ensure scaled amount fits in uint64
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
@@ -771,12 +737,11 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
-    function testDepositFor_succeedsWithMaxUint64Amount(
+    function testDepositFor_succeedsWithMaxTransferAmount(
         address _sender,
         address _recipient,
         uint32 destinationDex
     ) public {
-        uint256 amount = type(uint64).max / 100; // Max amount before scaling overflow
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
@@ -784,31 +749,31 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(destinationDex != SPOT_DEX_ID);
 
         // Arrange
-        _setupTokenMintAndApprove(_sender, amount);
+        _setupTokenMintAndApprove(_sender, MAX_TRANSFER_VALUE_FROM_EVM);
         _enableDestinationDex(destinationDex);
 
         // Expect Transfer and CoreWriter action
         vm.expectEmit(true, true, true, true);
-        emit Transfer(address(coreDepositWallet), TOKEN_SYSTEM_ADDRESS, amount);
+        emit Transfer(address(coreDepositWallet), TOKEN_SYSTEM_ADDRESS, MAX_TRANSFER_VALUE_FROM_EVM);
 
-        bytes memory expectedData = _buildCoreWriterAction(_recipient, amount, destinationDex);
+        bytes memory expectedData = _buildCoreWriterAction(_recipient, MAX_TRANSFER_VALUE_FROM_EVM, destinationDex);
         vm.expectEmit(true, true, true, true);
         emit SendRawAction(address(coreDepositWallet), expectedData);
 
         // Act
         vm.startPrank(_sender);
-        coreDepositWallet.depositFor(_recipient, amount, destinationDex);
+        coreDepositWallet.depositFor(_recipient, MAX_TRANSFER_VALUE_FROM_EVM, destinationDex);
         vm.stopPrank();
 
         // Assert balance
         assertEq(
             MockDepositableToken(TOKEN).balanceOf(address(coreDepositWallet)),
-            amount
+            MAX_TRANSFER_VALUE_FROM_EVM
         );
     }
 
     function testDepositFor_depositsToSpotIfDexForwardingDisabled(address _sender, address _recipient, uint256 _amount, uint32 destinationDex) public {
-        vm.assume(_amount > 0);
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
@@ -849,7 +814,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     }
 
     function testDepositFor_depositsToSpotIfDexIsSpot(address _sender, address _recipient, uint256 _amount) public {
-        vm.assume(_amount > 0);
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
@@ -878,7 +843,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     }
 
     function testDepositFor_depositsToSpotIfDexIsDisabled(address _sender, address _recipient, uint256 _amount, uint32 disabledDex) public {
-        vm.assume(_amount > 0);
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
@@ -909,7 +874,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         _assertSuccessfulDepositToSpot(_amount);
     }
 
-    function testDepositFor_revertsOnUint256Overflow(
+    function testDepositFor_revertsOnTransferAmountTooLarge(
         uint256 _amount,
         address _sender,
         address _recipient,
@@ -917,44 +882,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     ) public {
         _amount = bound(
             _amount,
-            type(uint256).max / 100 + 1,
+            MAX_TRANSFER_VALUE_FROM_EVM + 1,
             type(uint256).max
-        ); // Will cause SafeMath multiplication overflow
-        vm.assume(_sender != address(0));
-        vm.assume(_recipient != address(0));
-        vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
-        vm.assume(_recipient != address(coreDepositWallet));
-        vm.assume(_destinationDex != SPOT_DEX_ID);
-
-        // Enable destination dex
-        _enableDestinationDex(_destinationDex);
-
-        // Mint tokens to the sender
-        MockDepositableToken(TOKEN).mint(_sender, _amount);
-
-        // Approve the CoreDepositWallet to spend the tokens
-        vm.startPrank(_sender);
-        MockDepositableToken(TOKEN).approve(
-            address(coreDepositWallet),
-            _amount
         );
-
-        // Expect revert due to SafeMath multiplication overflow
-        vm.expectRevert("SafeMath: multiplication overflow");
-        coreDepositWallet.depositFor(_recipient, _amount, _destinationDex);
-        vm.stopPrank();
-    }
-
-    function testDepositFor_revertsOnUint64Overflow(
-        uint256 _amount,
-        address _sender,
-        address _recipient,
-        uint32 _destinationDex
-    ) public {
-        vm.assume(
-            _amount > type(uint64).max / 100 &&
-                _amount <= type(uint256).max / 100
-        ); // Will cause SafeCast overflow after scaling
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
@@ -975,7 +905,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
 
         // Expect revert due to SafeCast overflow
-        vm.expectRevert("SafeCast: value doesn't fit in 64 bits");
+        vm.expectRevert("Amount exceeds max transfer value from EVM");
         coreDepositWallet.depositFor(_recipient, _amount, _destinationDex);
         vm.stopPrank();
     }
@@ -986,6 +916,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint256 _amount,
         uint32 _destinationDex
     ) public {
+        vm.assume(_amount > 0);
         vm.assume(_sender != address(0));
         vm.assume(_recipient != address(0));
         vm.assume(_recipient != TOKEN_SYSTEM_ADDRESS);
@@ -998,7 +929,6 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             abi.encode(false)
         );
 
-        vm.assume(_amount > 0);
         vm.expectRevert("Transfer operation failed");
         coreDepositWallet.depositFor(_recipient, _amount, _destinationDex);
     }
@@ -1099,8 +1029,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         address _sender,
         uint32 _destinationDex
     ) public {
-        vm.assume(_amount > 0);
-        vm.assume(_amount <= type(uint64).max / 100); // Ensure scaled amount fits in uint64
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_sender != address(0));
         vm.assume(_destinationDex != SPOT_DEX_ID);
 
@@ -1152,7 +1081,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         address _sender,
         uint32 _destinationDex
     ) public {
-        uint256 amount = type(uint64).max / 100; // Max amount before scaling overflow
+        uint256 amount = MAX_TRANSFER_VALUE_FROM_EVM; // Max amount before scaling overflow
         vm.assume(_sender != address(0));
         vm.assume(_destinationDex != SPOT_DEX_ID);
         uint64 coreScaledAmount = uint64(amount * 100); // scaled core amount
@@ -1192,50 +1121,18 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
-    function testDepositWithAuth_revertsOnUint256Overflow(
+    function testDepositWithAuth_revertsOnTransferAmountTooLarge(
         uint256 _amount,
         address _sender,
         uint32 _destinationDex
     ) public {
         _amount = bound(
             _amount,
-            type(uint256).max / 100 + 1,
+            MAX_TRANSFER_VALUE_FROM_EVM + 1,
             type(uint256).max
-        ); // Will cause SafeMath multiplication overflow
-        vm.assume(_sender != address(0));
-        vm.assume(_destinationDex != SPOT_DEX_ID);
-
-        _enableDestinationDex(_destinationDex);
-
-        // Mint tokens to the sender
-        MockDepositableToken(TOKEN).mint(_sender, _amount);
-
-        // Expect revert due to SafeMath multiplication overflow
-        vm.prank(_sender);
-        vm.expectRevert("SafeMath: multiplication overflow");
-        coreDepositWallet.depositWithAuth(
-            _amount,
-            0,
-            1,
-            bytes32("nonce"),
-            0,
-            bytes32("r"),
-            bytes32("s"),
-            _destinationDex
         );
-    }
 
-    function testDepositWithAuth_revertsOnUint64Overflow(
-        uint256 _amount,
-        address _sender,
-        uint32 _destinationDex
-    ) public {
-        vm.assume(
-            _amount > type(uint64).max / 100 &&
-                _amount <= type(uint256).max / 100
-        ); // Will cause SafeCast overflow after scaling
         vm.assume(_sender != address(0));
-        vm.assume(_destinationDex != SPOT_DEX_ID);
 
         _enableDestinationDex(_destinationDex);
 
@@ -1244,7 +1141,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Expect revert due to SafeCast overflow
         vm.prank(_sender);
-        vm.expectRevert("SafeCast: value doesn't fit in 64 bits");
+        vm.expectRevert("Amount exceeds max transfer value from EVM");
         coreDepositWallet.depositWithAuth(
             _amount,
             0,
@@ -1407,9 +1304,11 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint256 _amount,
         uint32 _destinationDex
     ) public {
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
+
         // Constrain to valid values that avoid scaled amount overflow
         vm.assume(_sender != address(0));
-        vm.assume(_amount > 0 && _amount <= type(uint64).max / 100);
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_destinationDex != SPOT_DEX_ID);
 
         _enableDestinationDex(_destinationDex);
@@ -1687,8 +1586,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     ) public {
         vm.assume(destinationDex != SPOT_DEX_ID);
 
-        // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
-        evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        // Bound: 1 <= evmDepositAmount <= MAX_TRANSFER_VALUE_FROM_EVM to avoid scaling overflow
+        evmDepositAmount = bound(evmDepositAmount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         uint64 scaledCoreAmount = uint64(evmDepositAmount * 100);
         address recipient = address(0x123);
 
@@ -1875,8 +1774,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         _enableDestinationDex(destinationDex);
 
-        // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
-        evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        // Bound: 1 <= evmDepositAmount <= MAX_TRANSFER_VALUE_FROM_EVM to avoid scaling overflow
+        evmDepositAmount = bound(evmDepositAmount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         uint64 coreScaledAmount = uint64(evmDepositAmount * 100); // scaled core amount
         uint64 coreFee = 0; // 0 USDC (core token units)
         address recipient = address(0x123);
@@ -1932,8 +1831,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint256 evmDepositAmount,
         uint32 destinationDex
     ) public {
-        // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
-        evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        // Bound: 1 <= evmDepositAmount <= MAX_TRANSFER_VALUE_FROM_EVM to avoid scaling overflow
+        evmDepositAmount = bound(evmDepositAmount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         uint64 coreScaledAmount = uint64(evmDepositAmount * 100);
         vm.assume(_sender != address(0));
         vm.assume(destinationDex != SPOT_DEX_ID);
@@ -2120,8 +2019,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint256 evmDepositAmount,
         uint32 destinationDex
     ) public {
-        // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
-        evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        // Bound: 1 <= evmDepositAmount <= MAX_TRANSFER_VALUE_FROM_EVM to avoid scaling overflow
+        evmDepositAmount = bound(evmDepositAmount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         uint64 coreScaledAmount = uint64(evmDepositAmount * 100);
         uint64 coreFee = 0; // 0 USDC (core token units)
         vm.assume(_sender != address(0));
@@ -2261,8 +2160,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint256 evmDepositAmount,
         uint32 destinationDex
     ) public {
-        // Bound: 1 <= evmDepositAmount <= type(uint64).max / 100 to avoid scaling overflow
-        evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        // Bound: 1 <= evmDepositAmount <= MAX_TRANSFER_VALUE_FROM_EVM to avoid scaling overflow
+        evmDepositAmount = bound(evmDepositAmount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         uint64 coreScaledAmount = uint64(evmDepositAmount * 100); // scaled core amount
         vm.assume(_sender != address(0));
         vm.assume(destinationDex != SPOT_DEX_ID);
@@ -2399,7 +2298,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         uint32 destinationDex
     ) public {
         vm.assume(_sender != address(0));
-        evmDepositAmount = bound(evmDepositAmount, 1, type(uint64).max / 100);
+        evmDepositAmount = bound(evmDepositAmount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(destinationDex != SPOT_DEX_ID);
         uint64 coreScaledAmount = uint64(evmDepositAmount * 100);
 
@@ -2456,7 +2355,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     }
 
     function testDepositWithAuth_depositsToSpotIfDexForwardingDisabled(address _sender, uint256 _amount) public {
-        vm.assume(_amount > 0);
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_sender != address(0));
 
         // Disable dex forwarding
@@ -2498,7 +2397,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     }
 
     function testDepositWithAuth_depositsToSpotIfDexIsSpot(address _sender, uint256 _amount) public {
-        vm.assume(_amount > 0);
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_sender != address(0));
 
         // Mint tokens to the sender
@@ -2532,7 +2431,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     }
 
     function testDepositWithAuth_depositsToSpotIfDexIsDisabled(address _sender, uint256 _amount, uint32 destinationDex) public {
-        vm.assume(_amount > 0);
+        _amount = bound(_amount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
         vm.assume(_sender != address(0));
 
         // Mint tokens to the sender
@@ -2569,8 +2468,8 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(destinationDex != SPOT_DEX_ID);
         
         address recipient = address(0x123);
-        // Bound: 1 <= depositAmount <= type(uint64).max / 100 to avoid scaling overflow
-        depositAmount = bound(depositAmount, 1, type(uint64).max / 100);
+        // Bound: 1 <= depositAmount <= MAX_TRANSFER_VALUE_FROM_EVM to avoid scaling overflow
+        depositAmount = bound(depositAmount, 1, MAX_TRANSFER_VALUE_FROM_EVM);
 
         // Mock precompile call failure
         vm.mockCallRevert(
@@ -2621,7 +2520,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         vm.assume(destinationDex != SPOT_DEX_ID);
 
         // Bound fee (core units)
-        uint256 maxDeposit = type(uint64).max / 100;
+        uint256 maxDeposit = MAX_TRANSFER_VALUE_FROM_EVM;
         coreFee = uint64(bound(coreFee, 1, maxDeposit * 100 - 1));
         // Choose minimal deposit so that net core amount >= 1 and scaled fits in uint64
         uint256 depositAmount = (coreFee / 100) + 1;

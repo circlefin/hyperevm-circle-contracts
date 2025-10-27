@@ -25,17 +25,12 @@ import {Rescuable} from "./roles/Rescuable.sol";
 import {Initializable} from "@evm-cctp-contracts/proxy/Initializable.sol";
 import {IDepositableToken} from "./interfaces/IDepositableToken.sol";
 import {ICoreWriter} from "./interfaces/ICoreWriter.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/SafeCast.sol";
-import {SafeMath} from "@openzeppelin/contracts/math/SafeMath.sol";
 
 /**
  * @title CoreDepositWallet
  * @notice Contract for managing token deposits and transfers between HyperEVM and HyperCore. This contract is specific to 6 decimals (HyperEVM) tokens that are scaled to 8 decimals (HyperCore).
  */
 contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializable {
-    using SafeCast for uint256;
-    using SafeMath for uint256;
-
     // ============ Constants ============
     uint8 private constant CORE_WRITER_ACTION_VERSION = 0x01;
     uint24 private constant CORE_WRITER_SEND_ASSET_ACTION_ID = 0x00000D;
@@ -46,6 +41,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     address private constant CORE_WRITER_ADDRESS = 0x3333333333333333333333333333333333333333;
     address private constant CORE_USER_EXISTS_ADDRESS = 0x0000000000000000000000000000000000000810;
     uint64 private constant DEFAULT_NEW_CORE_ACCOUNT_FEE = 100000000; // 1 USDC (core token units, 8 decimals)
+    uint256 private constant MAX_TRANSFER_VALUE_FROM_EVM = 184467440737095516; // type(uint64).max / 100;
 
     // ============ Structs ============
     struct CoreDepositWalletRoles {
@@ -365,6 +361,29 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     }
 
     // ============ Internal Functions  ============
+    /**
+     * @notice Deposits the tokens and forwards them to HyperCore if the destination dex is enabled and forwarding is not disabled.
+     * @dev The deposit will be transferred to the _recipient address on Core spot, instead of the specified destination dex, if either:
+     * 1. dex forwarding is disabled
+     * 2. the specified destination dex is not enabled
+     * 3. the specified destination dex is the Core spot dex, uint32.max (equivalent to #2, because the spot dex is never enabled for forwarding)
+     * @param _recipient The address receiving the tokens on HyperCore.
+     * @param _amount The amount of tokens being deposited.
+     * @param _destinationDex The destination dex on HyperCore.
+     */
+    function _depositAndForwardIfDexEnabled(address _recipient, uint256 _amount, uint32 _destinationDex) internal {
+        require(_amount <= MAX_TRANSFER_VALUE_FROM_EVM, "Amount exceeds max transfer value from EVM");
+        // If dex forwarding is disabled, or the specified destination dex is not enabled,
+        // fall back to depositing to spot.
+        if (isDexForwardingDisabled || !enabledDestinationDexes[_destinationDex]) {
+            emit Transfer(_recipient, tokenSystemAddress, _amount);
+        // Else, deposit to the specified destination dex.
+        } else {
+            // Transfer to CoreDepositWallet address on Spot, then forward to destination dex via CoreWriter.
+            emit Transfer(address(this), tokenSystemAddress, _amount);
+            _sendAsset(_recipient, _amount, _destinationDex);
+        }
+    }
 
     /**
      * @notice Move the tokens from spot to perp on HyperCore via CoreWriter sendAsset action.
@@ -380,7 +399,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      *         uint32 sourceDex,          // spot: type(uint32).max
      *         uint32 destinationDex,     // perp: 0
      *         uint64 tokenIndex,         // 0 for USD on the main dex
-     *         uint64 amount)             // SafeCast enforces uint64; reverts on overflow
+     *         uint64 amount)             // amount in core token units (8 decimals)
      *
      *      Encoding:
      *        bytes memory payload = abi.encode(
@@ -389,7 +408,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      *            SOURCE_SPOT_DEX,
      *            DESTINATION_PERP_DEX,
      *            TOKEN_INDEX,
-     *            amount.toUint64()
+     *            amount
      *        );
      *        bytes memory data = abi.encodePacked(ACTION_VERSION, SEND_ASSET_ACTION_ID, payload);
      *
@@ -398,8 +417,8 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      * @param destinationDex The destination dex on HyperCore.
      */
     function _sendAsset(address recipient, uint256 evmAmount, uint32 destinationDex) internal {
-        uint256 scaledAmount = evmAmount.mul(CORE_SCALING_FACTOR);
-        uint64 coreAmount = scaledAmount.toUint64();
+        uint256 scaledAmount = evmAmount * CORE_SCALING_FACTOR;
+        uint64 coreAmount = uint64(scaledAmount);
         uint64 _newCoreAccountFee = newCoreAccountFee;
 
         if (_newCoreAccountFee > 0) {
@@ -448,28 +467,5 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         uint64 previous = newCoreAccountFee;
         newCoreAccountFee = _newCoreAccountFee;
         emit NewCoreAccountFeeUpdated(previous, _newCoreAccountFee);
-    }
-
-    /**
-     * @notice Deposits the tokens and forwards them to HyperCore if the destination dex is enabled and forwarding is not disabled.
-     * @dev The deposit will be transferred to the _recipient address on Core spot, instead of the specified destination dex, if either:
-     * 1. dex forwarding is disabled
-     * 2. the specified destination dex is not enabled
-     * 3. the specified destination dex is the Core spot dex, uint32.max (equivalent to #2, because the spot dex is never enabled for forwarding)
-     * @param _recipient The address receiving the tokens on HyperCore.
-     * @param _amount The amount of tokens being deposited.
-     * @param _destinationDex The destination dex on HyperCore.
-     */
-    function _depositAndForwardIfDexEnabled(address _recipient, uint256 _amount, uint32 _destinationDex) internal {
-        // If dex forwarding is disabled, or the specified destination dex is not enabled,
-        // fall back to depositing to spot.
-        if (isDexForwardingDisabled || !enabledDestinationDexes[_destinationDex]) {
-            emit Transfer(_recipient, tokenSystemAddress, _amount);
-        // Else, deposit to the specified destination dex.
-        } else {
-            // Transfer to CoreDepositWallet address on Spot, then forward to destination dex via CoreWriter.
-            emit Transfer(address(this), tokenSystemAddress, _amount);
-            _sendAsset(_recipient, _amount, _destinationDex);
-        }
     }
 }
