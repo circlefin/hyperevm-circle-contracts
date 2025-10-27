@@ -46,7 +46,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     event SendRawAction(address indexed user, bytes data);
 
-    event SendAsset(address indexed coreRecipient, uint64 coreAmount);
+    event SendAsset(address indexed coreRecipient, uint64 coreAmount, uint32 destinationDex);
 
     event NewCoreAccountFeeUpdated(uint64 previousFee, uint64 newFee);
 
@@ -497,7 +497,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Expect SendAsset event with scaled amount
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(_sender, coreScaledAmount);
+        emit SendAsset(_sender, coreScaledAmount, destinationDex);
 
         vm.startPrank(_sender);
         // Deposit tokens into the CoreDepositWallet
@@ -530,7 +530,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Expect SendAsset event with scaled amount
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(_sender, coreScaledAmount);
+        emit SendAsset(_sender, coreScaledAmount, destinationDex);
 
         // Act
         vm.startPrank(_sender);
@@ -741,7 +741,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Expect SendAsset event with scaled amount
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(_recipient, coreScaledAmount);
+        emit SendAsset(_recipient, coreScaledAmount, destinationDex);
 
         vm.startPrank(_sender);
         // Deposit tokens into the CoreDepositWallet
@@ -1073,7 +1073,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Expect SendAsset event with scaled amount
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(_sender, coreScaledAmount);
+        emit SendAsset(_sender, coreScaledAmount, _destinationDex);
 
         // Deposit tokens into the CoreDepositWallet
         vm.prank(_sender);
@@ -1117,7 +1117,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Expect SendAsset event with scaled amount
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(_sender, coreScaledAmount);
+        emit SendAsset(_sender, coreScaledAmount, _destinationDex);
 
         // Act
         vm.prank(_sender);
@@ -1910,7 +1910,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             evmDepositAmount
         );
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(recipient, scaledCoreAmount); // scaled core amount without any fee deduction
+        emit SendAsset(recipient, scaledCoreAmount, destinationDex); // scaled core amount without any fee deduction
 
         coreDepositWallet.depositFor(recipient, evmDepositAmount, destinationDex);
     }
@@ -1984,7 +1984,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Expect SendAsset event with scaled net amount (after fee deduction)
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(recipient, coreNetScaledAmount);
+        emit SendAsset(recipient, coreNetScaledAmount, destinationDex);
 
         coreDepositWallet.depositFor(recipient, evmAmount, destinationDex);
     }
@@ -2102,7 +2102,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             evmDepositAmount
         );
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(recipient, coreScaledAmount);
+        emit SendAsset(recipient, coreScaledAmount, destinationDex);
 
         coreDepositWallet.depositFor(recipient, evmDepositAmount, destinationDex);
     }
@@ -2147,7 +2147,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             evmDepositAmount
         );
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(_sender, coreScaledAmount);
+        emit SendAsset(_sender, coreScaledAmount, destinationDex);
 
         vm.startPrank(_sender);
         coreDepositWallet.deposit(evmDepositAmount, destinationDex);
@@ -2224,7 +2224,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
 
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(_sender, coreNetScaledAmount);
+        emit SendAsset(_sender, coreNetScaledAmount, destinationDex);
 
         coreDepositWallet.deposit(evmAmount, destinationDex);
         vm.stopPrank();
@@ -2340,7 +2340,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             evmDepositAmount
         );
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(_sender, coreScaledAmount);
+        emit SendAsset(_sender, coreScaledAmount, destinationDex);
 
         coreDepositWallet.deposit(evmDepositAmount, destinationDex);
         vm.stopPrank();
@@ -2421,7 +2421,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
         // Expect SendAsset event with scaled net amount (after fee)
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(_sender, coreScaledNetAmount);
+        emit SendAsset(_sender, coreScaledNetAmount, PERP_DEX_ID);
 
         vm.prank(_sender);
         coreDepositWallet.depositWithAuth(
@@ -2482,7 +2482,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             evmDepositAmount
         );
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(_sender, coreScaledAmount);
+        emit SendAsset(_sender, coreScaledAmount, destinationDex);
 
         vm.prank(_sender);
         coreDepositWallet.depositWithAuth(
@@ -2620,7 +2620,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             evmDepositAmount
         );
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(_sender, coreScaledAmount);
+        emit SendAsset(_sender, coreScaledAmount, destinationDex);
 
         vm.prank(_sender);
         coreDepositWallet.depositWithAuth(
@@ -2844,7 +2844,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Expect SendAsset event with scaled net amount (after fee)
         vm.expectEmit(true, true, true, true);
-        emit SendAsset(recipient, coreScaledNetAmount); // scaled core net amount
+        emit SendAsset(recipient, coreScaledNetAmount, destinationDex); // scaled core net amount
         coreDepositWallet.depositFor(recipient, depositAmount, destinationDex);
     }
 

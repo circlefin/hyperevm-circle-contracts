@@ -41,7 +41,8 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     uint32 private constant CCTP_FEE_LIMIT = type(uint32).max;
     // Magic bytes to identify CCTP forward hook data.
     // Encoded as "cctp-forward" in bytes 0-23, version 0 in bytes 24-27, and length 0 for additional hook data in bytes 28-31.
-    bytes private constant CCTP_FORWARD_HOOK_MAGIC_BYTES = abi.encodePacked(bytes32(0x636374702d666f72776172640000000000000000000000000000000000000000));
+    bytes private constant CCTP_FORWARD_HOOK_MAGIC_BYTES =
+        abi.encodePacked(bytes32(0x636374702d666f72776172640000000000000000000000000000000000000000));
     uint8 private constant CORE_WRITER_ACTION_VERSION = 0x01;
     uint24 private constant CORE_WRITER_SEND_ASSET_ACTION_ID = 0x00000D;
     uint64 private constant CORE_WRITER_TOKEN_INDEX = 0x0000000000000000;
@@ -173,8 +174,9 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      * @notice Emitted when the CoreWriter sendAsset action is called on HyperEVM to send assets to HyperCore.
      * @param coreRecipient The HyperCore recipient address
      * @param coreAmount The amount sent to the recipient on HyperCore in core token units (8 decimals)
+     * @param destinationDex The destination dex on HyperCore
      */
-    event SendAsset(address indexed coreRecipient, uint64 coreAmount);
+    event SendAsset(address indexed coreRecipient, uint64 coreAmount, uint32 destinationDex);
 
     // ============ State Variables ============
 
@@ -201,14 +203,14 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
 
     // Mapping for cross-chain forwarding fees for coreReceiveWithData for destination chains that do not use the CCTP_MAX_FEE.
     mapping(uint32 => uint256) public cctpForwardFees;
-    
+
     // Enabled destination dexes on HyperCore.
     // Note: Values set to true in this mapping represent dexes on Hypercore which are enabled
     // for forwarding deposits via CoreWriter. If a dex is not enabled,
     // deposits will be sent to the recipient address on Core spot instead.
     // The value of the mapping for the Core spot dex (uint32.max) is always left as false,
     // because deposits to the Core spot dex do not require forwarding by CoreWriter.
-    mapping (uint32 => bool) public enabledDestinationDexes;
+    mapping(uint32 => bool) public enabledDestinationDexes;
 
     // If true, deposits will be sent to the Core spot dex instead of the specified destination dex.
     bool public isDexForwardingDisabled;
@@ -434,7 +436,13 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      * @param amount The amount of tokens being transferred.
      * @param data Optional additional data. If provided, it is used in depositForBurnWithHook; otherwise, a default hook is created to request a relay on the destination chain.
      */
-    function coreReceiveWithData(address from, bytes32 destinationRecipient, uint32 destinationChainId, uint256 amount, bytes calldata data) external override whenNotPaused {
+    function coreReceiveWithData(
+        address from,
+        bytes32 destinationRecipient,
+        uint32 destinationChainId,
+        uint256 amount,
+        bytes calldata data
+    ) external override whenNotPaused {
         require(msg.sender == tokenSystemAddress, "Caller is not the system address");
 
         // Configure fee depending on if additional data is provided and whether a destination chain fee override exists
@@ -518,7 +526,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         // fall back to depositing to spot.
         if (isDexForwardingDisabled || !enabledDestinationDexes[_destinationDex]) {
             emit Transfer(_recipient, tokenSystemAddress, _amount);
-        // Else, deposit to the specified destination dex.
+            // Else, deposit to the specified destination dex.
         } else {
             // Transfer to CoreDepositWallet address on Spot, then forward to destination dex via CoreWriter.
             emit Transfer(address(this), tokenSystemAddress, _amount);
@@ -527,7 +535,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     }
 
     /**
-     * @notice Move the tokens from spot to perp on HyperCore via CoreWriter sendAsset action.
+     * @notice Move the tokens from the CoreDepositWallet's spot to a destination dex on HyperCore via CoreWriter sendAsset action.
      * @dev Uses _coreUserExists() to check HyperCore account status and subtracts newCoreAccountFee from the deposit amount for new users.
      *      Scales the amount from 6 decimals (HyperEVM) to 8 decimals (HyperCore).
      *      Encodes a Hyperliquid CoreWriter sendAsset action:
@@ -538,7 +546,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      *        (address recipient,         // recipient address on HyperCore
      *         address subAccount,        // always address(0) (subaccounts unused)
      *         uint32 sourceDex,          // spot: type(uint32).max
-     *         uint32 destinationDex,     // perp: 0
+     *         uint32 destinationDex,     // destination dex
      *         uint64 tokenIndex,         // 0 for USD on the main dex
      *         uint64 amount)             // amount in core token units (8 decimals)
      *
@@ -547,14 +555,14 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      *            recipient,
      *            address(0),
      *            SOURCE_SPOT_DEX,
-     *            DESTINATION_PERP_DEX,
+     *            destinationDex,
      *            TOKEN_INDEX,
      *            amount
      *        );
      *        bytes memory data = abi.encodePacked(ACTION_VERSION, SEND_ASSET_ACTION_ID, payload);
      *
      * @param recipient The address receiving the tokens on HyperCore.
-     * @param evmAmount Amount of tokens to send from HyperCore spot to HyperCore perps in evm token units (6 decimals).
+     * @param evmAmount Amount of tokens to send from the CoreDepositWallet's spot to the destination dex in evm token units (6 decimals).
      * @param destinationDex The destination dex on HyperCore.
      */
     function _sendAsset(address recipient, uint256 evmAmount, uint32 destinationDex) internal {
@@ -563,8 +571,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         uint64 _newCoreAccountFee = newCoreAccountFee;
 
         if (_newCoreAccountFee > 0) {
-            bool userExists = _coreUserExists(recipient);
-            if (!userExists) {
+            if (!_coreUserExists(recipient)) {
                 require(coreAmount > _newCoreAccountFee, "Amount must exceed new account fee");
                 coreAmount = coreAmount - _newCoreAccountFee;
 
@@ -584,7 +591,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
 
         ICoreWriter(CORE_WRITER_ADDRESS).sendRawAction(data);
 
-        emit SendAsset(recipient, coreAmount);
+        emit SendAsset(recipient, coreAmount, destinationDex);
     }
 
     /**
@@ -593,7 +600,11 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      * @param destinationChainId The CCTP domain ID of the destination chain.
      * @return fee The calculated cross-chain withdrawal fee.
      */
-    function _calculateCrossChainWithdrawFee(bool hookDataProvided, uint32 destinationChainId) internal view returns (uint256) {
+    function _calculateCrossChainWithdrawFee(bool hookDataProvided, uint32 destinationChainId)
+        internal
+        view
+        returns (uint256)
+    {
         // If a non-forwarding hook is provided, do not account for forwarding fees.
         if (hookDataProvided) {
             return cctpMaxFee;
