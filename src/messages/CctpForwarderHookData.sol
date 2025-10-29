@@ -30,32 +30,40 @@ import {TypedMemView} from "@memview-sol/contracts/TypedMemView.sol";
  *      Bytes 32-51: address - forwardRecipient address
  *      Bytes 52-55: destinationId - Forwarding-address-specific id used in conjunction with forwardRecipient to route the deposit to a specific location.
  *      Bytes 56+: Optional additional data
+ * @dev Reverts if hook data is less than 52 bytes long.
+ * @dev If destinationId is malformed (less than 4 bytes long), destinationId will be set to 0.
  */
 library CctpForwarderHookData {
     using TypedMemView for bytes29;
 
     uint256 private constant HOOK_VERSION = 0;
     uint256 private constant HOOK_VERSION_INDEX = 24;
-    uint8 private constant HOOK_VERSION_LENGTH = 4;
     uint256 private constant HOOK_RECIPIENT_INDEX = 32;
     uint256 private constant HOOK_DESTINATION_ID_INDEX = 52;
+    uint8 private constant HOOK_VERSION_LENGTH = 4;
     uint8 private constant HOOK_DESTINATION_ID_LENGTH = 4;
-    uint256 private constant HOOK_LENGTH = 56;
+    uint8 private constant MIN_HOOK_LENGTH = 52;
+    uint8 private constant MIN_HOOK_LENGTH_WITH_DESTINATION_ID = 56;
 
     /**
-     * @notice Get forward recipient from hook data. Note: This function 
-     * validates that hook data is at least 56 bytes long,
-     * and hook version is 0. Bytes 0-23 (magic bytes) and
-     * 28-31 (length) may be used offchain, but are not validated
-     * by this library.
+     * @notice Get forward recipient and destination id from hook data.
+     * @dev Gets the forward recipient from bytes 32-51 of hook data, and
+     * the destinationId from bytes 52-55.
+     * @dev Reverts if hook data is less than 52 bytes long, or hook version is not 0.
+     * @dev If destinationId is malformed (less than 4 bytes long, starting at byte 52),
+     * destinationId will be set to 0.
+     * @dev bytes 0-23 (magic bytes) and bytes 28-31 (data length) are ignored, but
+     * may be used offchain.
      * @param hookData Hook data
-     * @return forwardRecipient Forward recipient
+     * @return forwardRecipient Forward recipient address
+     * @return destinationId Forwarding-address-specific id used in conjunction with forward recipient to route the deposit to a specific location
      */
     function _getForwardRecipientAndDestinationId(
         bytes29 hookData
     ) internal pure returns (address forwardRecipient, uint32 destinationId) {
         // Verify hook
-        require(hookData.len() >= HOOK_LENGTH, "Invalid hook data: too short");
+        uint256 hookLength = hookData.len();
+        require(hookLength >= MIN_HOOK_LENGTH, "Invalid hook data: too short");
         uint256 hookVersion = hookData.indexUint(
             HOOK_VERSION_INDEX,
             HOOK_VERSION_LENGTH
@@ -64,8 +72,16 @@ library CctpForwarderHookData {
 
         // Get forward recipient
         forwardRecipient = hookData.indexAddress(HOOK_RECIPIENT_INDEX);
-        destinationId = uint32(
-            hookData.indexUint(HOOK_DESTINATION_ID_INDEX, HOOK_DESTINATION_ID_LENGTH)
-        );
+
+        if (hookLength >= MIN_HOOK_LENGTH_WITH_DESTINATION_ID) {
+            destinationId = uint32(
+                hookData.indexUint(
+                    HOOK_DESTINATION_ID_INDEX,
+                    HOOK_DESTINATION_ID_LENGTH
+                )
+            );
+        } else {
+            destinationId = 0;
+        }
     }
 }

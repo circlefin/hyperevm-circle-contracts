@@ -219,8 +219,26 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
         forwarder.mintAndForward(message, signature);
     }
 
-    function test_MintAndForward_revertsIfInvalidBurnMessage() public {
+    function test_MintAndForward_revertsIfInvalidBurnMessageLen51() public {
+        bytes
+            memory burnMessage = "000000000000000000000000000000000000000000000000000";
+        assertEq(burnMessage.length, 51); // less than minimum 52 bytes
+        bytes memory message = _formatMessageForForwarding(
+            MESSAGE_VERSION,
+            SOURCE_DOMAIN,
+            DESTINATION_DOMAIN,
+            SENDER,
+            RECIPIENT,
+            DESTINATION_CALLER,
+            burnMessage
+        );
+        vm.expectRevert("Invalid burn message: too short");
+        forwarder.mintAndForward(message, VALID_SIGNATURE);
+    }
+
+    function test_MintAndForward_revertsIfInvalidBurnMessageLen0() public {
         bytes memory burnMessage = "";
+        assertEq(burnMessage.length, 0); // less than minimum 52 bytes
         bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
             SOURCE_DOMAIN,
@@ -770,14 +788,15 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
     }
 
     function test_MintAndForward_succeedsWithLongHookData() public {
-        bytes memory hookWithZeroMagicBytes = abi.encodePacked(
+        bytes memory hookWithExtraData = abi.encodePacked(
             bytes24(0),
             uint32(0),
             uint32(20),
             FORWARD_RECIPIENT,
+            PERP_DEX_ID,
             uint256(9001) // extra data at the end
         );
-        assertEq(hookWithZeroMagicBytes.length, 84);
+        assertEq(hookWithExtraData.length, 88);
 
         bytes memory burnMessage = _formatBurnMessageForForwarding(
             BURN_VERSION,
@@ -788,7 +807,7 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             MAX_FEE,
             FEE_EXECUTED,
             EXPIRATION_BLOCK,
-            hookWithZeroMagicBytes
+            hookWithExtraData
         );
         bytes memory message = _formatMessageForForwarding(
             MESSAGE_VERSION,
@@ -808,11 +827,184 @@ contract CctpForwarderTest is TestUtils, DeployScriptTestUtils {
             PERP_DEX_ID,
             AMOUNT - FEE_EXECUTED
         );
-        // No magic bytes validation is implemented, so this should succeed
         forwarder.mintAndForward(message, VALID_SIGNATURE);
     }
 
-    function testAddTokenForwardingAddress_succeeds(
+    function test_MintAndForward_interpretsEmptyDestinationIdAsZero() public {
+        bytes memory hookWithMissingDestinationId = abi.encodePacked(
+            bytes24(0),
+            uint32(0),
+            uint32(20),
+            FORWARD_RECIPIENT
+        );
+        assertEq(hookWithMissingDestinationId.length, 52);
+
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
+            BURN_VERSION,
+            BURN_TOKEN,
+            MINT_RECIPIENT,
+            AMOUNT,
+            MESSAGE_SENDER,
+            MAX_FEE,
+            FEE_EXECUTED,
+            EXPIRATION_BLOCK,
+            hookWithMissingDestinationId
+        );
+        bytes memory message = _formatMessageForForwarding(
+            MESSAGE_VERSION,
+            SOURCE_DOMAIN,
+            DESTINATION_DOMAIN,
+            SENDER,
+            RECIPIENT,
+            DESTINATION_CALLER,
+            burnMessage
+        );
+        // Expect MintAndForward event
+        vm.expectEmit(true, true, true, true);
+        emit MintAndForward(
+            FORWARD_RECIPIENT,
+            address(CORE_DEPOSIT_WALLET),
+            TOKEN,
+            PERP_DEX_ID,
+            AMOUNT - FEE_EXECUTED
+        );
+        forwarder.mintAndForward(message, VALID_SIGNATURE);
+    }
+
+    function test_MintAndForward_succeedsWithOneByteDestinationId(
+        uint8 destinationId
+    ) public {
+        bytes memory hookWithOneByteDestinationId = abi.encodePacked(
+            bytes24(0),
+            uint32(0),
+            uint32(20),
+            FORWARD_RECIPIENT,
+            destinationId
+        );
+        assertEq(hookWithOneByteDestinationId.length, 53);
+
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
+            BURN_VERSION,
+            BURN_TOKEN,
+            MINT_RECIPIENT,
+            AMOUNT,
+            MESSAGE_SENDER,
+            MAX_FEE,
+            FEE_EXECUTED,
+            EXPIRATION_BLOCK,
+            hookWithOneByteDestinationId
+        );
+        bytes memory message = _formatMessageForForwarding(
+            MESSAGE_VERSION,
+            SOURCE_DOMAIN,
+            DESTINATION_DOMAIN,
+            SENDER,
+            RECIPIENT,
+            DESTINATION_CALLER,
+            burnMessage
+        );
+        // Expect MintAndForward event
+        vm.expectEmit(true, true, true, true);
+        emit MintAndForward(
+            FORWARD_RECIPIENT,
+            address(CORE_DEPOSIT_WALLET),
+            TOKEN,
+            PERP_DEX_ID,
+            AMOUNT - FEE_EXECUTED
+        );
+        forwarder.mintAndForward(message, VALID_SIGNATURE);
+    }
+
+    function test_MintAndForward_succeedsWithTwoByteDestinationId(
+        uint16 destinationId
+    ) public {
+        bytes memory hookWithTwoByteDestinationId = abi.encodePacked(
+            bytes24(0),
+            uint32(0),
+            uint32(20),
+            FORWARD_RECIPIENT,
+            destinationId
+        );
+        assertEq(hookWithTwoByteDestinationId.length, 54);
+
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
+            BURN_VERSION,
+            BURN_TOKEN,
+            MINT_RECIPIENT,
+            AMOUNT,
+            MESSAGE_SENDER,
+            MAX_FEE,
+            FEE_EXECUTED,
+            EXPIRATION_BLOCK,
+            hookWithTwoByteDestinationId
+        );
+        bytes memory message = _formatMessageForForwarding(
+            MESSAGE_VERSION,
+            SOURCE_DOMAIN,
+            DESTINATION_DOMAIN,
+            SENDER,
+            RECIPIENT,
+            DESTINATION_CALLER,
+            burnMessage
+        );
+
+        // Expect MintAndForward event
+        vm.expectEmit(true, true, true, true);
+        emit MintAndForward(
+            FORWARD_RECIPIENT,
+            address(CORE_DEPOSIT_WALLET),
+            TOKEN,
+            PERP_DEX_ID,
+            AMOUNT - FEE_EXECUTED
+        );
+        forwarder.mintAndForward(message, VALID_SIGNATURE);
+    }
+
+    function test_MintAndForward_succeedsWithThreeByteDestinationId(
+        uint24 destinationId
+    ) public {
+        bytes memory hookWithThreeByteDestinationId = abi.encodePacked(
+            bytes24(0),
+            uint32(0),
+            uint32(20),
+            FORWARD_RECIPIENT,
+            destinationId
+        );
+        assertEq(hookWithThreeByteDestinationId.length, 55);
+
+        bytes memory burnMessage = _formatBurnMessageForForwarding(
+            BURN_VERSION,
+            BURN_TOKEN,
+            MINT_RECIPIENT,
+            AMOUNT,
+            MESSAGE_SENDER,
+            MAX_FEE,
+            FEE_EXECUTED,
+            EXPIRATION_BLOCK,
+            hookWithThreeByteDestinationId
+        );
+        bytes memory message = _formatMessageForForwarding(
+            MESSAGE_VERSION,
+            SOURCE_DOMAIN,
+            DESTINATION_DOMAIN,
+            SENDER,
+            RECIPIENT,
+            DESTINATION_CALLER,
+            burnMessage
+        );
+        // Expect MintAndForward event
+        vm.expectEmit(true, true, true, true);
+        emit MintAndForward(
+            FORWARD_RECIPIENT,
+            address(CORE_DEPOSIT_WALLET),
+            TOKEN,
+            PERP_DEX_ID,
+            AMOUNT - FEE_EXECUTED
+        );
+        forwarder.mintAndForward(message, VALID_SIGNATURE);
+    }
+
+    function testAddTokenForwarditooshorngAddress_succeeds(
         address token,
         address forwardingAddress
     ) public {
