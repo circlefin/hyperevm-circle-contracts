@@ -42,7 +42,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
     event CctpDefaultForwardFeeUpdated(uint256 previousFee, uint256 newFee);
 
-    event CctpForwardFeeUpdated(uint32 destinationDomain, uint256 previousFee, uint256 newFee);
+    event CctpForwardFeeUpdated(uint32 indexed destinationDomain, uint256 previousFee, uint256 newFee);
 
     event SendRawAction(address indexed user, bytes data);
 
@@ -80,9 +80,9 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     event DexForwardingEnabled();
 
     address public newTokenSystemAddress = address(11);
-    address private constant CORE_USER_EXISTS_ADDRESS =
+    address private constant CORE_USER_EXISTS_PRECOMPILE_ADDRESS =
         0x0000000000000000000000000000000000000810;
-    address private constant CORE_WRITER_ADDRESS =
+    address private constant CORE_WRITER_PRECOMPILE_ADDRESS =
         0x3333333333333333333333333333333333333333;
 
     uint64 private constant DEFAULT_NEW_CORE_ACCOUNT_FEE = 100000000; // 1 USDC (8 decimals)
@@ -109,7 +109,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     function _deployMockCoreUserExistsPrecompile() internal {
         // Deploy a simple contract that always returns true (user exists)
         vm.etch(
-            CORE_USER_EXISTS_ADDRESS,
+            CORE_USER_EXISTS_PRECOMPILE_ADDRESS,
             type(MockCoreUserExistsPrecompile).runtimeCode
         );
     }
@@ -154,7 +154,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
     function _mockCoreUserExists(address user, bool exists) internal {
         // Mock the CoreUserExistsPrecompile contract to return the desired exists value
         vm.mockCall(
-            CORE_USER_EXISTS_ADDRESS,
+            CORE_USER_EXISTS_PRECOMPILE_ADDRESS,
             abi.encode(user),
             abi.encode(exists)
         );
@@ -1686,29 +1686,29 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             "coreWriterSendAssetActionId"
         );
         assertEq(
-            uint256(c.coreWriterTokenIndex),
+            uint256(c.coreTokenIndex),
             uint256(0),
-            "coreWriterTokenIndex"
+            "coreTokenIndex"
         );
         assertEq(
-            uint256(c.coreWriterSourceSpotDex),
+            uint256(c.coreSpotDexId),
             uint256(SPOT_DEX_ID),
-            "coreWriterSourceSpotDex"
+            "coreSpotDexId"
         );
         assertEq(
-            uint256(c.coreWriterDestinationPerpDex),
+            uint256(c.corePerpsDexId),
             uint256(0),
-            "coreWriterDestinationPerpDex"
+            "corePerpsDexId"
         );
         assertEq(
-            c.coreWriterAddress,
+            c.coreWriterPrecompileAddress,
             0x3333333333333333333333333333333333333333,
-            "coreWriterAddress"
+            "coreWriterPrecompileAddress"
         );
         assertEq(
-            c.coreUserExistsAddress,
+            c.coreUserExistsPrecompileAddress,
             0x0000000000000000000000000000000000000810,
-            "coreUserExistsAddress"
+            "coreUserExistsPrecompileAddress"
         );
         assertEq(
             uint256(c.coreScalingFactor),
@@ -1747,7 +1747,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
     }
 
-    function testEnableDexForwarding_onlyOwner(uint32 dex) public {
+    function testEnableDexForwarding_onlyOwner() public {
         vm.prank(address(0x999));
         vm.expectRevert("Ownable: caller is not the owner");
         coreDepositWallet.enableDexForwarding();
@@ -1896,7 +1896,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
 
         vm.expectCall(
-            CORE_WRITER_ADDRESS,
+            CORE_WRITER_PRECOMPILE_ADDRESS,
             abi.encodeWithSelector(
                 ICoreWriter.sendRawAction.selector,
                 expectedData
@@ -1958,7 +1958,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
 
         vm.expectCall(
-            CORE_WRITER_ADDRESS,
+            CORE_WRITER_PRECOMPILE_ADDRESS,
             abi.encodeWithSelector(
                 ICoreWriter.sendRawAction.selector,
                 expectedData
@@ -2087,7 +2087,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
 
         vm.expectCall(
-            CORE_WRITER_ADDRESS,
+            CORE_WRITER_PRECOMPILE_ADDRESS,
             abi.encodeWithSelector(
                 ICoreWriter.sendRawAction.selector,
                 expectedData
@@ -2133,7 +2133,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
 
         vm.expectCall(
-            CORE_WRITER_ADDRESS,
+            CORE_WRITER_PRECOMPILE_ADDRESS,
             abi.encodeWithSelector(
                 ICoreWriter.sendRawAction.selector,
                 expectedData
@@ -2200,7 +2200,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             expectedPayload
         );
         vm.expectCall(
-            CORE_WRITER_ADDRESS,
+            CORE_WRITER_PRECOMPILE_ADDRESS,
             abi.encodeWithSelector(
                 ICoreWriter.sendRawAction.selector,
                 expectedData
@@ -2326,7 +2326,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             destinationDex
         );
         vm.expectCall(
-            CORE_WRITER_ADDRESS,
+            CORE_WRITER_PRECOMPILE_ADDRESS,
             abi.encodeWithSelector(
                 ICoreWriter.sendRawAction.selector,
                 expectedData
@@ -2397,7 +2397,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         );
 
         vm.expectCall(
-            CORE_WRITER_ADDRESS,
+            CORE_WRITER_PRECOMPILE_ADDRESS,
             abi.encodeWithSelector(
                 ICoreWriter.sendRawAction.selector,
                 expectedData
@@ -2468,7 +2468,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             destinationDex
         );
         vm.expectCall(
-            CORE_WRITER_ADDRESS,
+            CORE_WRITER_PRECOMPILE_ADDRESS,
             abi.encodeWithSelector(
                 ICoreWriter.sendRawAction.selector,
                 expectedData
@@ -2606,7 +2606,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
             destinationDex
         );
         vm.expectCall(
-            CORE_WRITER_ADDRESS,
+            CORE_WRITER_PRECOMPILE_ADDRESS,
             abi.encodeWithSelector(
                 ICoreWriter.sendRawAction.selector,
                 expectedData
@@ -2754,7 +2754,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Mock precompile call failure
         vm.mockCallRevert(
-            CORE_USER_EXISTS_ADDRESS,
+            CORE_USER_EXISTS_PRECOMPILE_ADDRESS,
             abi.encode(recipient),
             "Precompile error"
         );
@@ -2816,7 +2816,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
 
         // Mock user does NOT exist
         vm.mockCall(
-            CORE_USER_EXISTS_ADDRESS,
+            CORE_USER_EXISTS_PRECOMPILE_ADDRESS,
             abi.encode(recipient),
             abi.encode(false)
         );
