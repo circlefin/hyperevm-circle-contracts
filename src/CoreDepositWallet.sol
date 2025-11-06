@@ -26,6 +26,8 @@ import {Initializable} from "@evm-cctp-contracts/proxy/Initializable.sol";
 import {IDepositableToken} from "./interfaces/IDepositableToken.sol";
 import {ICoreWriter} from "./interfaces/ICoreWriter.sol";
 import {TokenMessengerV2} from "@evm-cctp-contracts/v2/TokenMessengerV2.sol";
+import {TypedMemView} from "@memview-sol/contracts/TypedMemView.sol";
+import {CctpForwarderHookData} from "./messages/CctpForwarderHookData.sol";
 
 /**
  * @title CoreDepositWallet
@@ -34,15 +36,18 @@ import {TokenMessengerV2} from "@evm-cctp-contracts/v2/TokenMessengerV2.sol";
 contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializable {
     // ============ Constants ============
 
-    // Ensures CCTP waits for finality before attesting to messages sent by this contract
-    uint32 private constant CCTP_FINALIZED_THRESHOLD = 2000;
+    // CCTP protocol constants.
+    uint32 private constant CCTP_FINALIZED_THRESHOLD = 2000; // Ensures CCTP waits for finality before attesting to messages sent by this contract.
     uint256 private constant CCTP_MAX_FEE = 0;
     uint256 private constant CCTP_DEFAULT_FORWARD_FEE = 200000; // 0.2 USDC (6 decimals)
     uint32 private constant CCTP_FEE_LIMIT = type(uint32).max;
-    // Magic bytes to identify CCTP forward hook data.
-    // Encoded as "cctp-forward" in bytes 0-23, version 0 in bytes 24-27, and length 0 for additional hook data in bytes 28-31.
-    bytes private constant CCTP_FORWARD_HOOK_MAGIC_BYTES =
-        abi.encodePacked(bytes32(0x636374702d666f72776172640000000000000000000000000000000000000000));
+    // CCTP forwarder hook constants.
+    bytes24 private constant HOOK_MAGIC_BYTES = bytes24("cctp-forward");
+    uint32 private constant HOOK_VERSION = 0;
+    uint32 private constant HOOK_DATA_LENGTH = 0;
+    bytes private constant HOOK_HEADER = abi.encodePacked(HOOK_MAGIC_BYTES, HOOK_VERSION, HOOK_DATA_LENGTH);
+    uint32 private constant HOOK_HEADER_LENGTH = 32; // 24 bytes magic + 4 bytes version + 4 bytes data length
+    // HyperCore protocol constants.
     uint8 private constant CORE_WRITER_ACTION_VERSION = 0x01;
     uint24 private constant CORE_WRITER_SEND_ASSET_ACTION_ID = 0x00000D;
     uint64 private constant CORE_TOKEN_INDEX = 0x0000000000000000;
@@ -52,7 +57,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     address private constant CORE_WRITER_PRECOMPILE_ADDRESS = 0x3333333333333333333333333333333333333333;
     address private constant CORE_USER_EXISTS_PRECOMPILE_ADDRESS = 0x0000000000000000000000000000000000000810;
     uint64 private constant DEFAULT_NEW_CORE_ACCOUNT_FEE = 100000000; // 1 USDC (core asset units, 8 decimals)
-    uint256 private constant MAX_TRANSFER_VALUE_FROM_EVM = type(uint64).max / CORE_SCALING_FACTOR; // max HyperCore asset units (uint64.max) / HyperCore -> EVMscaling factor (100)
+    uint256 private constant MAX_TRANSFER_VALUE_FROM_EVM = type(uint64).max / CORE_SCALING_FACTOR; // max HyperCore asset units (uint64.max) / HyperCore -> EVM scaling factor (100)
 
     // ============ Structs ============
     struct CoreDepositWalletRoles {
@@ -430,6 +435,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     /**
      * @notice Handles cross-chain funds withdrawal via CCTP.
      * @dev This function can only be called by the token's system address.
+     * @dev Note that the CCTP destinationCaller is always set to bytes32(0) and if you are passing custom hook data, anyone can call the MessageTransmitterV2.receiveMessage directly on the destination chain.
      * @param from The Hypercore address debited by the cross-chain withdrawal.
      * @param destinationRecipient The address receiving the minted tokens on the destination chain, as bytes32
      * @param destinationChainId The CCTP domain ID of the destination chain.
@@ -445,14 +451,12 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     ) external override whenNotPaused {
         require(msg.sender == tokenSystemAddress, "Caller is not the system address");
 
-        // Configure fee depending on if additional data is provided and whether a destination chain fee override exists
-        bool hookDataProvided = data.length > 0;
-        uint256 maxFee = _calculateCrossChainWithdrawFee(hookDataProvided, destinationChainId);
+        uint256 maxFee = calculateCrossChainWithdrawFee(data, destinationChainId);
         require(amount > maxFee, "Amount must exceed maxFee");
         require(token.approve(address(tokenMessenger), amount), "Token approval failed");
 
         // If data is provided, use it in depositForBurnWithHook, otherwise create a hook to request a relay on the destination chain
-        bytes memory hookData = hookDataProvided ? data : CCTP_FORWARD_HOOK_MAGIC_BYTES;
+        bytes memory hookData = data.length > 0 ? data : HOOK_HEADER;
 
         tokenMessenger.depositForBurnWithHook(
             amount,
@@ -470,6 +474,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
 
     /**
      * @notice Returns the HyperCore protocol constants
+     * @return constants The HyperCore protocol constants.
      */
     function getCoreProtocolConstants() external pure returns (CoreProtocolConstants memory constants) {
         return CoreProtocolConstants({
@@ -486,6 +491,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
 
     // ============ Internal Functions  ============
     /**
+     * @notice Deposits tokens to the recipient's account on HyperCore.
      * @dev Handles the token transfer to the CoreDepositWallet on behalf of recipient.
      * @param _recipient The address receiving the tokens on HyperCore.
      * @param _amount The amount of tokens being deposited.
@@ -603,25 +609,27 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
     }
 
     /**
-     * @notice Calculates the cross-chain withdrawal fee based on whether hook data is provided and if a destination chain fee override exists.
-     * @param hookDataProvided True if additional hook data is provided to coreReceiveWithData, false otherwise.
-     * @param destinationChainId The CCTP domain ID of the destination chain.
-     * @return fee The calculated cross-chain withdrawal fee.
+     * @notice Calculates the cross-chain withdrawal fee from hook data and destination chain settings.
+     * @dev Behavior:
+     *      - If no hook data is provided or the hook data starts with the CCTP forwarding hook magic bytes,
+     *        maxFee = cctpMaxFee + (forwardFee if destination chain fee override exists, else cctpDefaultForwardFee).
+     *      - Otherwise, maxFee = cctpMaxFee (no forwarding fee).
+     * @param data Hook data passed to coreReceiveWithData.
+     * @param destinationChainId CCTP domain ID of the destination chain.
+     * @return maxFee The computed maximum fee for the burn call.
      */
-    function _calculateCrossChainWithdrawFee(bool hookDataProvided, uint32 destinationChainId)
-        internal
+    function calculateCrossChainWithdrawFee(bytes calldata data, uint32 destinationChainId)
+        public
         view
-        returns (uint256)
+        returns (uint256 maxFee)
     {
-        // If a non-forwarding hook is provided, do not account for forwarding fees.
-        if (hookDataProvided) {
-            return cctpMaxFee;
+        if (!_shouldCrossChainForward(data)) {
+            maxFee = cctpMaxFee;
+        } else {
+            uint256 forwardFee =
+                isCctpForwardFeeSet[destinationChainId] ? cctpForwardFees[destinationChainId] : cctpDefaultForwardFee;
+            maxFee = cctpMaxFee + forwardFee;
         }
-        // Else, calculate combined fee based on whether a forward fee override exists for the destination chain.
-        uint256 forwardFee = isCctpForwardFeeSet[destinationChainId]
-            ? cctpForwardFees[destinationChainId]
-            : cctpDefaultForwardFee;
-        return cctpMaxFee + forwardFee;
     }
 
     /**
@@ -634,6 +642,20 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         (bool success, bytes memory result) = CORE_USER_EXISTS_PRECOMPILE_ADDRESS.staticcall(abi.encode(user));
         require(success, "Core user exists precompile call failed");
         return abi.decode(result, (CoreUserExists)).exists;
+    }
+
+    /**
+     * @notice Checks if cross-chain forwarding should be performed for the given hook data.
+     * @dev If the hook data is empty, then cross-chain forwarding should be performed.
+     * @dev If the hook data is less than the required forwarder hook header length, then cross-chain forwarding should not be performed.
+     * @dev If the hook data starts with the forwarder hook magic bytes, then cross-chain forwarding should be performed.
+     * @param data Hook data passed to coreReceiveWithData.
+     * @return True if cross-chain forwarding should be performed, false otherwise.
+     */
+    function _shouldCrossChainForward(bytes calldata data) internal pure returns (bool) {
+        if (data.length == 0) return true;
+        if (data.length < HOOK_HEADER_LENGTH) return false;
+        return CctpForwarderHookData._getMagicBytes(TypedMemView.ref(data, 0)) == HOOK_MAGIC_BYTES;
     }
 
     /**
