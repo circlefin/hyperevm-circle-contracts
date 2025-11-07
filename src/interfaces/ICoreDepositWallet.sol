@@ -40,15 +40,53 @@ interface ICoreDepositWallet is IForwardDepositReceiver {
     function transfer(address to, uint256 amount) external returns (bool success);
 
     /**
-     * @notice Handles the token transfer from the CoreDepositWallet to the recipient and initiates a cross-chain burn via CCTP.
-     * @dev This function can only be called by the token's system address.
-     * @param from The Hypercore address debited by the cross-chain withdrawal.
-     * @param destinationRecipient The address receiving the minted tokens on the destination chain, as bytes32
+     * @notice Handles cross-chain token withdrawals from HyperCore to a destination chain via CCTP.
+     * @dev This function initiates a cross-chain transfer of tokens using CCTP to mint tokens on the destination chain.
+     *      It constructs and sends a CCTP message containing encoded hook data that embeds the optional user-provided
+     *      data to be used on the destination chain and determines the CCTP forwarding behavior.
+     *
+     * @dev Requirements:
+     *      - Caller must be the token system address.
+     *      - `amount` must be strictly greater than the computed maximum withdrawal fee
+     *        (see calculateCrossChainWithdrawalFee).
+     *
+     * @dev CCTP behavior:
+     *      - The CCTP message's destinationCaller is always set to `bytes32(0)` and anyone can call
+     *        MessageTransmitterV2.receiveMessage directly on the destination chain.
+     * 
+     * @dev Forwarding is the process of completing the mint on the destination chain by paying gas to
+     *      submit a transaction that includes the CCTP attestation. When forwarding is requested:
+     *      - The forwarder subtracts a configured amount of minted tokens from the final recipient,
+     *        not exceeding the CCTP maxFee.
+     *      - This forwarding amount is added to the CCTP maxFee to compute the total fee for the
+     *        cross-chain withdrawal.
+     * 
+     * @dev Forwarding logic:
+     * The forwarding logic is determined by the user-provided data:
+     *      - If `data` is empty: the hook data will be a default forwarding hook and forwarding will be performed.
+     *      - If `data` begins with the CCTP forwarding magic bytes: the hook data will embed `data` and forwarding will be performed.
+     *      - Otherwise: the hook data will embed `data` and forwarding will NOT be performed.
+     *
+     * @dev Hook data encoding:
+     * The hook data is constructed using the `CrossChainWithdrawalHookData` library. See that library for the full
+     * encoding details.
+     *
+     * @param from The HyperCore address debited by the cross-chain withdrawal.
+     * @param destinationRecipient The address receiving the minted tokens on the destination chain, as bytes32.
      * @param destinationChainId The CCTP domain ID of the destination chain.
      * @param amount The amount of tokens being transferred.
-     * @param data Optional additional data. If provided, it is used in depositForBurnWithHook; otherwise, a default hook is created to request a relay on the destination chain.
+     * @param coreNonce The HyperCore transaction nonce.
+     * @param data Optional user-provided data to embed in the CCTP message payload hook data; also determines the
+     *             forwarding logic as described above. Must be less than MAX_HOOK_DATA_SIZE.
      */
-    function coreReceiveWithData(address from, bytes32 destinationRecipient, uint32 destinationChainId, uint256 amount, bytes calldata data) external;
+    function coreReceiveWithData(
+        address from,
+        bytes32 destinationRecipient,
+        uint32 destinationChainId,
+        uint256 amount,
+        uint64 coreNonce,
+        bytes calldata data
+    ) external;
 
     /**
      * @notice Deposits tokens with authorization.

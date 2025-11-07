@@ -24,11 +24,7 @@ contract MockCoreDepositWallet is ICoreDepositWallet {
 
     function deposit(uint256 amount, uint32 destinationDex) external override {}
 
-    function depositFor(
-        address recipient,
-        uint256 amount,
-        uint32 destinationDex
-    ) external override {}
+    function depositFor(address recipient, uint256 amount, uint32 destinationDex) external override {}
 
     function depositWithAuth(
         uint256 amount,
@@ -45,5 +41,12 @@ contract MockCoreDepositWallet is ICoreDepositWallet {
         return true;
     }
 
-    function coreReceiveWithData(address from, bytes32 destinationRecipient, uint32 destinationChainId, uint256 amount, bytes calldata data) external override {}
+    function coreReceiveWithData(
+        address from,
+        bytes32 destinationRecipient,
+        uint32 destinationChainId,
+        uint256 amount,
+        uint64 coreNonce,
+        bytes calldata data
+    ) external override {}
 }

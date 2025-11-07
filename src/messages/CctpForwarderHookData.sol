@@ -36,8 +36,6 @@ import {TypedMemView} from "@memview-sol/contracts/TypedMemView.sol";
 library CctpForwarderHookData {
     using TypedMemView for bytes29;
 
-    uint8 private constant HOOK_MAGIC_BYTES_INDEX = 0;
-    uint8 private constant HOOK_MAGIC_BYTES_LENGTH = 24;
     uint256 private constant HOOK_VERSION = 0;
     uint256 private constant HOOK_VERSION_INDEX = 24;
     uint256 private constant HOOK_RECIPIENT_INDEX = 32;
@@ -46,17 +44,6 @@ library CctpForwarderHookData {
     uint8 private constant HOOK_DESTINATION_ID_LENGTH = 4;
     uint8 private constant MIN_HOOK_LENGTH = 52;
     uint8 private constant MIN_HOOK_LENGTH_WITH_DESTINATION_ID = 56;
-
-    /**
-     * @notice Get magic bytes from hook data.
-     * @dev Gets the magic bytes from bytes 0-23 of hook data.
-     * @param hookData Hook data
-     * @return bytes24 Magic bytes
-     */
-    function _getMagicBytes(bytes29 hookData) internal pure returns (bytes24) {
-        require(hookData.len() >= HOOK_MAGIC_BYTES_INDEX + HOOK_MAGIC_BYTES_LENGTH, "Invalid hook data: too short");
-        return bytes24(hookData.index(HOOK_MAGIC_BYTES_INDEX, HOOK_MAGIC_BYTES_LENGTH));
-    }
 
     /**
      * @notice Get forward recipient and destination id from hook data.
