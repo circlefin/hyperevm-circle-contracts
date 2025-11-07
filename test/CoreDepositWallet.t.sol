@@ -150,7 +150,7 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         bytes memory userData
     ) internal pure returns (bytes memory) {
         bytes24 magic = shouldForward ? bytes24("cctp-forward") : bytes24(0);
-        return abi.encodePacked(magic, uint32(0), uint32(20 + 4 + userData.length), from, nonce, userData); // 20 bytes for EVM address + 4 bytes for nonce + length of the user data
+        return abi.encodePacked(magic, uint32(0), uint32(20 + 8 + userData.length), from, nonce, userData); // 20 bytes for EVM address + 8 bytes for nonce + length of the user data
     }
 
     function _setupTokenMintAndApprove(

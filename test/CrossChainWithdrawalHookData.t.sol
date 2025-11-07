@@ -82,7 +82,7 @@ contract CrossChainWithdrawalHookDataTest is Test {
         bytes memory expected = abi.encodePacked(
             MAGIC,
             uint32(0),
-            uint32(20 + 4 + userData.length),
+            uint32(20 + 8 + userData.length),
             from,
             nonce,
             userData
@@ -99,7 +99,7 @@ contract CrossChainWithdrawalHookDataTest is Test {
         bytes memory expected = abi.encodePacked(
             bytes24(0),
             uint32(0),
-            uint32(20 + 4 + userData.length),
+            uint32(20 + 8 + userData.length),
             from,
             nonce,
             userData

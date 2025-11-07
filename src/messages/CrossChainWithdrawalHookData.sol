@@ -30,10 +30,10 @@ import {TypedMemView} from "@memview-sol/contracts/TypedMemView.sol";
  * @dev The final hook data format that will be included in the CCTP message payload hook data follows the following format:
  *      Bytes 0-23:  bytes24 - Magic bytes "cctp-forward" or 0 if not forwarding
  *      Bytes 24-27: uint32  - CrossChainWithdrawal Hook Data Version ID (0)
- *      Bytes 28-31: uint32  - Length of CrossChainWithdrawal Hook Data (20 bytes for EVM address + 4 bytes for nonce + length of the data field)
+ *      Bytes 28-31: uint32  - Length of CrossChainWithdrawal Hook Data (20 bytes for EVM address + 8 bytes for nonce + length of the data field)
  *      Bytes 32-51: address - from address
- *      Bytes 52-55: nonce - HyperCore nonce
- *      Bytes 56+: the user provided hook data
+ *      Bytes 52-59: uint64  - HyperCore nonce (8 bytes)
+ *      Bytes 60+:   bytes   - the user provided hook data
  */
 library CrossChainWithdrawalHookData {
     using TypedMemView for bytes29;
@@ -43,7 +43,7 @@ library CrossChainWithdrawalHookData {
     uint32 private constant HOOK_VERSION = 0;
     bytes24 private constant HOOK_MAGIC_BYTES = bytes24("cctp-forward");
     uint8 private constant HOOK_EVM_ADDRESS_LENGTH = 20;
-    uint8 private constant HOOK_NONCE_LENGTH = 4;
+    uint8 private constant HOOK_NONCE_LENGTH = 8;
 
     /**
      * @notice Get magic bytes from hook data.
@@ -80,9 +80,9 @@ library CrossChainWithdrawalHookData {
      * @dev The hook data is built with the following format:
      *      - bytes24 - Magic bytes "cctp-forward" (optional - set to 0 to opt out of CCTP cross-chain withdrawal forwarding.)
      *      - uint32  - CrossChainWithdrawal Hook Data Version ID (0)
-     *      - uint32  - Length of CrossChainWithdrawal Hook Data (20 bytes for EVM address + 4 bytes for nonce + length of the data field)
+     *      - uint32  - Length of CrossChainWithdrawal Hook Data (20 bytes for EVM address + 8 bytes for nonce + length of the data field)
      *      - address - from address
-     *      - nonce - HyperCore nonce
+     *      - uint64 - HyperCore nonce
      *      - bytes - the user provided hook data
      * @param shouldForward True if cross-chain forwarding should be performed, false otherwise.
      * @param from The address from which the cross-chain withdrawal is being made.
