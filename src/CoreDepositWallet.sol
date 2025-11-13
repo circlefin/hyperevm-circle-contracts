@@ -468,7 +468,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      * @param amount The amount of tokens being transferred.
      * @param coreNonce The HyperCore transaction nonce.
      * @param data Optional user-provided data to embed in the CCTP message payload hook data; also determines the
-     *             forwarding logic as described above. Must be less than MAX_HOOK_DATA_SIZE.
+     *             forwarding logic as described above. Must be less than or equal to MAX_HOOK_DATA_SIZE.
      */
     function coreReceiveWithData(
         address from,
@@ -479,7 +479,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
         bytes calldata data
     ) external override whenNotPaused {
         require(msg.sender == tokenSystemAddress, "Caller is not the system address");
-        require(data.length < MAX_HOOK_DATA_SIZE, "Data length exceeds MAX_HOOK_DATA_SIZE");
+        require(data.length <= MAX_HOOK_DATA_SIZE, "Data length exceeds MAX_HOOK_DATA_SIZE");
 
         bool shouldForward = _shouldForward(data);
         uint256 maxFee = calculateCrossChainWithdrawalFee(shouldForward, destinationChainId);
@@ -698,7 +698,7 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
 
     /**
      * @notice Queries the HyperCore precompile to determine if a user account exists.
-     * @dev Makes a staticcall to the CORE_USER_EXISTS_ADDRESS precompile at 0x810.
+     * @dev Makes a staticcall to the CORE_USER_EXISTS_PRECOMPILE_ADDRESS precompile.
      * @param user The address to check for existence on HyperCore
      * @return exists True if the user exists on HyperCore, false otherwise
      */
@@ -718,9 +718,9 @@ contract CoreDepositWallet is ICoreDepositWallet, Pausable, Rescuable, Initializ
      * @return True if cross-chain withdrawal forwarding should be performed, false otherwise.
      */
     function _shouldForward(bytes calldata data) internal pure returns (bool) {
+        if (data.length == 0) return true;
         bytes29 _data = TypedMemView.ref(data, 0);
         CrossChainWithdrawalHookData._validateHookData(_data);
-        if (data.length == 0) return true;
         return CrossChainWithdrawalHookData._hasForwardingMagicBytes(_data);
     }
 }

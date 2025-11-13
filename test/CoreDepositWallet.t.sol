@@ -2033,18 +2033,43 @@ contract CoreDepositWalletTest is TestUtils, DeployScriptTestUtils {
         coreDepositWallet.coreReceiveWithData(_from, _destinationRecipient, _destinationChainId, _amount, _nonce, "");
     }
 
-    function testCoreReceiveWithData_revertsWhenDataLengthEqualsMaxHookDataSize() public {
-        address _from = address(0xBEEF);
-        bytes32 _destinationRecipient = bytes32(uint256(0x01));
-        uint32 _destinationChainId = 1;
-        uint64 _nonce = 123;
-        uint256 _amount = 1; // cctpMaxFee defaults to 0, so 1 is sufficient
+    function testCoreReceiveWithData_succeedsWhenDataLengthEqualsMaxHookDataSize(
+        address _from,
+        bytes32 _destinationRecipient,
+        uint32 _destinationChainId,
+        uint256 _amount,
+        uint64 _nonce
+    ) public {
+        vm.assume(_from != address(0));
 
-        // Create user data that exceeds MAX_MESSAGE_BODY_SIZE
-        bytes memory userData = new bytes(MAX_HOOK_DATA_SIZE);
+        // Data exactly at MAX_HOOK_DATA_SIZE should now be allowed (<=)
+        bytes memory userData = new bytes(MAX_HOOK_DATA_SIZE); // non-magic (all zeros), so shouldForward = false
+
+        // shouldForward = false → maxFee = CCTP_MAX_FEE
+        uint256 maxFee = CCTP_MAX_FEE;
+        _amount = bound(_amount, maxFee + 1, type(uint256).max);
+
+        // Expect depositForBurnWithHook calldata (shouldForward=false but userData embedded)
+        bytes memory expectedHook = _buildExpectedHook(false, _from, _nonce, userData);
+        bytes memory expected = abi.encodeWithSignature(
+            "depositForBurnWithHook(uint256,uint32,bytes32,address,bytes32,uint256,uint32,bytes)",
+            _amount,
+            _destinationChainId,
+            _destinationRecipient,
+            address(TOKEN),
+            bytes32(0),
+            maxFee,
+            CCTP_FINALIZED_THRESHOLD,
+            expectedHook
+        );
+        vm.mockCall(TOKEN_MESSENGER, expected, abi.encode());
+        vm.expectCall(TOKEN_MESSENGER, expected, 1);
+
+        // Expect event from wallet with original amount
+        vm.expectEmit(true, true, true, true);
+        emit CrossChainWithdraw(_from, _destinationRecipient, _amount, _destinationChainId, _nonce);
 
         vm.prank(TOKEN_SYSTEM_ADDRESS);
-        vm.expectRevert(bytes("Data length exceeds MAX_HOOK_DATA_SIZE"));
         coreDepositWallet.coreReceiveWithData(
             _from, _destinationRecipient, _destinationChainId, _amount, _nonce, userData
         );

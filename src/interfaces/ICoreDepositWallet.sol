@@ -77,7 +77,7 @@ interface ICoreDepositWallet is IForwardDepositReceiver {
      * @param amount The amount of tokens being transferred.
      * @param coreNonce The HyperCore transaction nonce.
      * @param data Optional user-provided data to embed in the CCTP message payload hook data; also determines the
-     *             forwarding logic as described above. Must be less than MAX_HOOK_DATA_SIZE.
+     *             forwarding logic as described above. Must be less than or equal to MAX_HOOK_DATA_SIZE.
      */
     function coreReceiveWithData(
         address from,
