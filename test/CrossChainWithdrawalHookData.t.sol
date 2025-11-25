@@ -22,6 +22,12 @@ import {CrossChainWithdrawalHookDataHarness} from "./mocks/CrossChainWithdrawalH
 
 contract CrossChainWithdrawalHookDataTest is Test {
     bytes24 private constant MAGIC = bytes24("cctp-forward");
+    
+    // Type byte lengths for hook data structure
+    uint256 private constant ADDRESS_LENGTH = 20;      // bytes in address type
+    uint256 private constant UINT64_LENGTH = 8;        // bytes in uint64 type
+    uint256 private constant BYTES24_LENGTH = 24;      // bytes in bytes24 type
+    uint256 private constant UINT32_LENGTH = 4;        // bytes in uint32 type
 
     function testValidateHookData_revertsOnMalformed() public {
         CrossChainWithdrawalHookDataHarness h = new CrossChainWithdrawalHookDataHarness();
@@ -106,6 +112,55 @@ contract CrossChainWithdrawalHookDataTest is Test {
         );
         assertEq(keccak256(built), keccak256(expected));
     }
+
+    function testBuild_structuralValidation_largeValues() public {
+        CrossChainWithdrawalHookDataHarness h = new CrossChainWithdrawalHookDataHarness();
+        
+        // Use max values that would break if fields are undersized
+        address from = address(type(uint160).max);
+        uint64 nonce = type(uint64).max;
+        bytes memory userData = new bytes(100);
+        
+        bytes memory built = h.buildHook(true, from, nonce, userData);
+        
+        // Build expected using same field sizes
+        bytes memory expected = abi.encodePacked(
+            MAGIC,
+            uint32(0),
+            uint32(ADDRESS_LENGTH + UINT64_LENGTH + userData.length),
+            from,
+            nonce,
+            userData
+        );
+        
+        assertEq(keccak256(built), keccak256(expected), "Hook encoding should match abi.encodePacked for max values");
+        assertEq(built.length, expected.length, "Hook length should match expected length");
+    }
+
+    function testBuild_lengthFieldAccuracy_fuzzed(uint256 len) public {
+        // Bound the length and allocate a buffer of that size
+        uint256 maxLen = 8192 - ADDRESS_LENGTH - UINT64_LENGTH;
+        len = bound(len, 0, maxLen);
+        bytes memory userData = new bytes(len);
+
+        CrossChainWithdrawalHookDataHarness h = new CrossChainWithdrawalHookDataHarness();
+        bytes memory built = h.buildHook(true, address(0xBEEF), 12345, userData);
+
+        // Extract length field (after magic + version)
+        uint32 encodedLength;
+        uint256 magicLen = BYTES24_LENGTH;
+        uint256 versionLen = UINT32_LENGTH;
+        assembly {
+            let lengthFieldOffset := add(add(32, magicLen), versionLen)
+            encodedLength := mload(add(built, lengthFieldOffset))
+            encodedLength := shr(224, encodedLength)
+        }
+
+        // Verify it accounts for address + nonce + userData
+        assertEq(encodedLength, ADDRESS_LENGTH + UINT64_LENGTH + userData.length, "Length field must correctly encode total payload size");
+
+        // Verify total hook size matches header + payload
+        uint256 expectedTotal = BYTES24_LENGTH + UINT32_LENGTH + UINT32_LENGTH + encodedLength;
+        assertEq(built.length, expectedTotal, "Total hook size must match encoded structure");
+    }
 }
-
-
