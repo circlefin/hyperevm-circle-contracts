@@ -33,6 +33,16 @@ jobs:
 
       - name: Run Unit Tests
         run: make test
+  
+  build_success_rollup:
+    runs-on: ubuntu-latest
+    name: Build Success Rollup
+    if: ${{ always() }}
+    needs:
+      - lint-and-test
+    steps:
+      - run: |
+          [ "${{ needs.lint-and-test.result }}" = "success" ] || [ "${{ needs.lint-and-test.result }}" = "skipped" ]
 
   scan:
     needs: lint-and-test
