@@ -1,4 +1,4 @@
-# hyperevm-circle-contracts-private
+# hyperevm-circle-contracts
 
 Repository for all HyperEVM contracts developed by Circle
 
